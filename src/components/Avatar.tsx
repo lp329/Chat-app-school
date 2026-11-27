@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { AVATAR_COLORS, PRESET_AVATARS } from '../lib/constants';
 import type { AvatarType } from '../types/chat';
 
@@ -34,7 +34,7 @@ function getInitial(name: string): string {
   return Array.from(trimmed)[0].toUpperCase();
 }
 
-export function Avatar({
+export const Avatar = memo(function Avatar({
   name,
   avatarType,
   avatarValue,
@@ -62,15 +62,17 @@ export function Avatar({
 
   return (
     <div
-      className={`relative shrink-0 overflow-hidden rounded-full select-none flex items-center justify-center font-semibold text-white ring-1 ring-white/10 ${
+      className={`relative shrink-0 overflow-hidden rounded-full select-none flex items-center justify-center font-semibold text-white ring-1 ring-slate-900/10 dark:ring-white/10 ${
         SIZE_MAP[size]
-      } ${!isImageUrl ? matchedColor : 'bg-slate-800'} ${className}`}
+      } ${!isImageUrl ? matchedColor : 'bg-slate-200 dark:bg-slate-800'} ${className}`}
       aria-label={name ? `${name}のアバター` : 'アバター'}
     >
       {isImageUrl ? (
         <img
           src={avatarValue}
           alt={name || 'プロフィール画像'}
+          loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
           className={`w-full h-full object-cover ${presetMatch?.zoomClass || ''}`}
@@ -80,4 +82,4 @@ export function Avatar({
       )}
     </div>
   );
-}
+});

@@ -1,9 +1,7 @@
 import type { BubbleThemeId, CoverThemeId, WallpaperThemeId } from '../types/chat';
 
 /**
- * Supabase接続設定（コード内の定数または環境変数から設定可能）
- * 未設定の場合はアプリ内の歯車アイコン（接続設定モーダル）から入力・保存でき、
- * 設定前でもローカルモックモードでリアルタイム風のUI確認が可能です。
+ * Supabase接続設定（環境変数 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY のみから自動読み込み）
  */
 export const DEFAULT_SUPABASE_URL =
   (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
@@ -69,46 +67,46 @@ export interface BubbleThemeOption {
 
 export const BUBBLE_THEMES: BubbleThemeOption[] = [
   {
-    id: 'blue',
-    label: 'コバルトブルー',
-    bubbleClass: 'bg-blue-600 text-white',
-    tailColor: '#2563eb',
-    swatchClass: 'bg-blue-600',
+    id: 'line-green',
+    label: 'エメラルドグリーン',
+    bubbleClass: 'bg-emerald-500 dark:bg-emerald-600 text-white',
+    tailColor: '#10b981',
+    swatchClass: 'bg-emerald-500',
   },
   {
     id: 'sky',
-    label: 'オーシャンスカイ',
-    bubbleClass: 'bg-sky-600 text-white',
-    tailColor: '#0284c7',
-    swatchClass: 'bg-sky-600',
+    label: 'スカイブルー',
+    bubbleClass: 'bg-sky-500 dark:bg-sky-600 text-white',
+    tailColor: '#0ea5e9',
+    swatchClass: 'bg-sky-500',
   },
   {
-    id: 'line-green',
-    label: 'ライムグリーン',
-    bubbleClass: 'bg-emerald-600 text-white',
-    tailColor: '#059669',
-    swatchClass: 'bg-emerald-600',
+    id: 'blue',
+    label: 'コバルトブルー',
+    bubbleClass: 'bg-blue-500 dark:bg-blue-600 text-white',
+    tailColor: '#3b82f6',
+    swatchClass: 'bg-blue-500',
   },
   {
     id: 'indigo',
-    label: 'ナイトインディゴ',
-    bubbleClass: 'bg-indigo-600 text-white',
-    tailColor: '#4f46e5',
-    swatchClass: 'bg-indigo-600',
+    label: 'インディゴ',
+    bubbleClass: 'bg-indigo-500 dark:bg-indigo-600 text-white',
+    tailColor: '#6366f1',
+    swatchClass: 'bg-indigo-500',
   },
   {
     id: 'rose',
-    label: 'ダスティローズ',
-    bubbleClass: 'bg-rose-600 text-white',
-    tailColor: '#e11d48',
-    swatchClass: 'bg-rose-600',
+    label: 'コーラルローズ',
+    bubbleClass: 'bg-rose-500 dark:bg-rose-600 text-white',
+    tailColor: '#f43f5e',
+    swatchClass: 'bg-rose-500',
   },
   {
     id: 'amber',
     label: 'ウォームアンバー',
-    bubbleClass: 'bg-amber-600 text-white',
-    tailColor: '#d97706',
-    swatchClass: 'bg-amber-600',
+    bubbleClass: 'bg-amber-500 dark:bg-amber-600 text-white',
+    tailColor: '#f59e0b',
+    swatchClass: 'bg-amber-500',
   },
 ];
 
@@ -120,34 +118,40 @@ export interface CoverThemeOption {
 
 export const COVER_THEMES: CoverThemeOption[] = [
   {
-    id: 'midnight',
-    label: 'ミッドナイト',
-    gradientClass: 'from-slate-900 via-blue-950 to-slate-900',
+    id: 'forest',
+    label: 'フレッシュミント',
+    gradientClass:
+      'from-emerald-400 via-teal-500 to-sky-500 dark:from-slate-900 dark:via-emerald-950 dark:to-slate-900',
   },
   {
     id: 'ocean',
-    label: 'ディープブルー',
-    gradientClass: 'from-blue-950 via-sky-900 to-slate-900',
+    label: 'クリアスカイ',
+    gradientClass:
+      'from-sky-400 via-blue-500 to-indigo-500 dark:from-blue-950 dark:via-sky-900 dark:to-slate-900',
   },
   {
-    id: 'forest',
-    label: 'ナイトフォレスト',
-    gradientClass: 'from-slate-900 via-emerald-950 to-slate-900',
+    id: 'midnight',
+    label: 'ミッドナイト',
+    gradientClass:
+      'from-slate-700 via-blue-800 to-slate-800 dark:from-slate-900 dark:via-blue-950 dark:to-slate-900',
   },
   {
     id: 'twilight',
     label: 'トワイライト',
-    gradientClass: 'from-indigo-950 via-slate-900 to-blue-950',
+    gradientClass:
+      'from-indigo-400 via-violet-500 to-sky-500 dark:from-indigo-950 dark:via-slate-900 dark:to-blue-950',
   },
   {
     id: 'crimson',
     label: 'ダスクローズ',
-    gradientClass: 'from-slate-900 via-rose-950 to-slate-900',
+    gradientClass:
+      'from-rose-400 via-pink-500 to-amber-400 dark:from-slate-900 dark:via-rose-950 dark:to-slate-900',
   },
   {
     id: 'slate',
     label: 'モノクローム',
-    gradientClass: 'from-slate-800 via-slate-900 to-slate-950',
+    gradientClass:
+      'from-slate-400 via-slate-500 to-slate-600 dark:from-slate-800 dark:via-slate-900 dark:to-slate-950',
   },
 ];
 
@@ -161,33 +165,34 @@ export interface WallpaperThemeOption {
 export const WALLPAPER_THEMES: WallpaperThemeOption[] = [
   {
     id: 'slate',
-    label: 'ダークスレート',
-    bgClass: 'bg-[#0b1221]',
-    previewClass: 'bg-[#0b1221]',
+    label: 'ソフトブルーグレー',
+    bgClass: 'bg-[#EDF2F7] dark:bg-[#0b1221]',
+    previewClass: 'bg-[#EDF2F7] dark:bg-[#0b1221]',
   },
   {
     id: 'midnight',
-    label: 'ミッドナイトネイビー',
-    bgClass: 'bg-gradient-to-b from-[#0b1529] via-[#0e1a33] to-[#0a1120]',
-    previewClass: 'bg-[#0e1a33]',
+    label: 'クリアスカイ',
+    bgClass:
+      'bg-gradient-to-b from-[#E6F2FA] via-[#EDF2F7] to-[#E2E8F0] dark:from-[#0b1529] dark:via-[#0e1a33] dark:to-[#0a1120]',
+    previewClass: 'bg-[#E6F2FA] dark:bg-[#0e1a33]',
   },
   {
     id: 'dots',
     label: 'ドットパターン',
-    bgClass: 'bg-[#0c1322] wallpaper-dots',
-    previewClass: 'bg-[#0c1322] wallpaper-dots',
+    bgClass: 'bg-[#EDF2F7] dark:bg-[#0c1322] wallpaper-dots',
+    previewClass: 'bg-[#EDF2F7] dark:bg-[#0c1322] wallpaper-dots',
   },
   {
     id: 'grid',
     label: 'グリッドライン',
-    bgClass: 'bg-[#0b111e] wallpaper-grid',
-    previewClass: 'bg-[#0b111e] wallpaper-grid',
+    bgClass: 'bg-[#F1F5F9] dark:bg-[#0b111e] wallpaper-grid',
+    previewClass: 'bg-[#F1F5F9] dark:bg-[#0b111e] wallpaper-grid',
   },
   {
     id: 'charcoal',
-    label: 'チャコールブラック',
-    bgClass: 'bg-[#111318]',
-    previewClass: 'bg-[#111318]',
+    label: 'クールグレー',
+    bgClass: 'bg-[#E2E8F0] dark:bg-[#111318]',
+    previewClass: 'bg-[#E2E8F0] dark:bg-[#111318]',
   },
 ];
 
@@ -252,6 +257,12 @@ export function formatRoomCode(code: string): string {
   return `${clean.slice(0, 3)} ${clean.slice(3)}`;
 }
 
+export function getRoomDisplayTitle(roomCode: string, title?: string | null): string {
+  const trimmed = (title || '').trim();
+  if (trimmed) return trimmed;
+  return `ルーム ${formatRoomCode(roomCode)}`;
+}
+
 export function formatTimeHHMM(isoString: string): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return '--:--';
@@ -290,30 +301,8 @@ export function formatDateDivider(isoString: string): string {
   return `${date.getFullYear()}年${m}月${d}日(${w})`;
 }
 
-export const SUPABASE_SETUP_SQL = `-- 1. messages テーブルを作成
-create table if not exists public.messages (
-  id uuid primary key default gen_random_uuid(),
-  room_code text not null,
-  sender_name text not null,
-  content text not null,
-  sender_id text,
-  sender_avatar text,
-  sender_color text,
-  created_at timestamptz not null default now()
-);
+export const REACTION_EMOJIS = ['👍', '😂', '❤️', '🔥', '🙏'] as const;
 
--- 2. ルーム検索用インデックス
-create index if not exists idx_messages_room_code_created_at
-  on public.messages (room_code, created_at asc);
-
--- 3. RLS を有効化し、匿名チャット用に読み書きを許可
-alter table public.messages enable row level security;
-
-create policy "Anyone can read room messages"
-  on public.messages for select using (true);
-
-create policy "Anyone can insert room messages"
-  on public.messages for insert with check (true);
-
--- 4. Supabase Realtime を有効化
-alter publication supabase_realtime add table public.messages;`;
+export const OFFICIAL_ROOM_ID = '__ROOMLINE_OFFICIAL__';
+export const SYSTEM_MAINTENANCE_ROOM_KEY = '__ROOMLINE_SYSTEM_MAINTENANCE__';
+export const REPORT_REASONS = ['スパム・荒らし', '不適切な発言', 'その他'] as const;

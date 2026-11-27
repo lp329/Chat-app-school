@@ -1,108 +1,150 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  ArrowDown,
+  Calculator,
   Check,
+  ChevronLeft,
   Copy,
+  Flag,
   Loader2,
+  Lock,
   LogOut,
-  MessageCircle,
-  Send,
+  Pencil,
+  QrCode,
   Settings,
-  Smile,
-  UserPlus,
+  ShieldCheck,
+  Unlock,
+  Users,
   Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
 import {
   BUBBLE_THEMES,
-  PRESET_AVATARS,
-  QUICK_STAMPS,
   WALLPAPER_THEMES,
-  formatDateDivider,
   formatRoomCode,
-  formatTimeHHMM,
+  getRoomDisplayTitle,
 } from '../lib/constants';
-import {
-  appendMockMessage,
-  loadMockMessages,
-  subscribeToMockRoom,
-} from '../lib/storage';
-import {
-  fetchRoomMessagesFromSupabase,
-  sendRoomMessageToSupabase,
-  subscribeToSupabaseRoom,
-} from '../lib/supabaseService';
 import type {
   ChatMessage,
+  CustomSticker,
+  OnlineMember,
   RealtimeStatus,
-  SupabaseConfig,
+  ReplyReference,
   UserProfile,
 } from '../types/chat';
 import { Avatar } from './Avatar';
+import { ChatComposer } from './ChatComposer';
+import { ChatMessageList } from './ChatMessageList';
+import { DeleteMessageModal } from './DeleteMessageModal';
+import { ImageLightbox, type LightboxImageData } from './ImageLightbox';
+import { RoomQrModal } from './RoomQrModal';
 
 interface ChatRoomViewProps {
   roomCode: string;
+  roomTitle?: string;
+  roomPasscode?: string | null;
+  messages: ChatMessage[];
+  onlineMembers: OnlineMember[];
+  customStickers: CustomSticker[];
+  loading: boolean;
+  realtimeStatus: RealtimeStatus;
+  errorMsg: string | null;
   profile: UserProfile;
-  supabaseConfig: SupabaseConfig;
-  isSupabaseConfigured: boolean;
-  onLeaveRoom: () => void;
+  onSendMessage: (
+    roomCode: string,
+    content: string,
+    imageFile?: File | null,
+    replyTo?: ReplyReference | null
+  ) => Promise<string | null>;
+  onSendSticker: (
+    roomCode: string,
+    stickerUrl: string,
+    replyTo?: ReplyReference | null
+  ) => Promise<string | null>;
+  onToggleReaction: (
+    roomCode: string,
+    message: ChatMessage,
+    emoji: string
+  ) => Promise<string | null>;
+  onTypingChange: (isTyping: boolean) => void;
+  onAddCustomSticker: (file: File) => Promise<string | null>;
+  onDeleteCustomSticker: (stickerId: string) => void;
+  onDeleteMessage: (roomCode: string, messageId: string) => Promise<string | null>;
+  onUpdateRoomTitle: (roomCode: string, nextTitle: string) => Promise<string | null>;
+  onOpenPasscodeManage: () => void;
+  onOpenReportModal: (initialTargetUser?: string) => void;
+  onRequestLeaveRoom: (roomCode: string) => void;
+  onBackToLobby: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
-  onLatestMessageUpdate: (roomCode: string, message: ChatMessage) => void;
+  onActivateCamouflage: () => void;
 }
 
-const DEMO_PEER_SAMPLES = [
-  {
-    name: 'ミキ',
-    avatar: PRESET_AVATARS[1].url,
-    color: 'indigo',
-    texts: [
-      'ルーム番号ありがとう！無事に入れたよ',
-      'デザインすっきりしてて見やすいね！',
-      'このチャット、別タブを開いて同じ番号を入れるとリアルタイム同期も確認できるよ',
-    ],
-  },
-  {
-    name: 'レン',
-    avatar: PRESET_AVATARS[2].url,
-    color: 'sky',
-    texts: [
-      'おつかれさまです！今合流しました',
-      'Shift+Enterで改行できるの便利ですね',
-      'プロフィール画面からアイコンや吹き出しの色も変えられるみたい！',
-    ],
-  },
-];
-
-export function ChatRoomView({
+export const ChatRoomView = memo(function ChatRoomView({
   roomCode,
+  roomTitle,
+  roomPasscode,
+  messages,
+  onlineMembers,
+  customStickers,
+  loading,
+  realtimeStatus,
+  errorMsg,
   profile,
-  supabaseConfig,
-  isSupabaseConfigured,
-  onLeaveRoom,
+  onSendMessage,
+  onSendSticker,
+  onToggleReaction,
+  onTypingChange,
+  onAddCustomSticker,
+  onDeleteCustomSticker,
+  onDeleteMessage,
+  onUpdateRoomTitle,
+  onOpenPasscodeManage,
+  onOpenReportModal,
+  onRequestLeaveRoom,
+  onBackToLobby,
   onOpenSettings,
   onOpenProfile,
-  onLatestMessageUpdate,
+  onActivateCamouflage,
 }: ChatRoomViewProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>(
-    isSupabaseConfigured ? 'connecting' : 'mock'
-  );
-  const [inputText, setInputText] = useState('');
-  const [sending, setSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ReplyReference | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [showStamps, setShowStamps] = useState(false);
-  const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [demoIndex, setDemoIndex] = useState(0);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [showOnlinePopover, setShowOnlinePopover] = useState(false);
 
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const isNearBottomRef = useRef(true);
+  // Modals inside ChatRoom (conditionally mounted only when open)
+  const [deleteTarget, setDeleteTarget] = useState<ChatMessage | null>(null);
+  const [deletingMsg, setDeletingMsg] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<LightboxImageData | null>(null);
+
+  // Room title inline editing state
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(roomTitle || '');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const presenceContainerRef = useRef<HTMLDivElement | null>(null);
+  const prevRoomRef = useRef(roomCode);
+
+  const displayTitle = getRoomDisplayTitle(roomCode, roomTitle);
+  const formattedCode = formatRoomCode(roomCode);
+  const isLocked = Boolean(roomPasscode && roomPasscode.trim());
+  const myNickname = profile.nickname.trim() || 'ゲスト';
+
+  const typingPeers = useMemo(
+    () => onlineMembers.filter((m) => m.userId !== profile.id && Boolean(m.isTyping)),
+    [onlineMembers, profile.id]
+  );
+
+  const typingIndicatorText = useMemo(() => {
+    if (typingPeers.length === 0) return null;
+    if (typingPeers.length === 1) {
+      return `${typingPeers[0].nickname}さんが入力中...`;
+    }
+    return `${typingPeers[0].nickname}さん他が入力中...`;
+  }, [typingPeers]);
 
   const myBubbleTheme = useMemo(
     () => BUBBLE_THEMES.find((b) => b.id === profile.bubbleTheme) || BUBBLE_THEMES[0],
@@ -115,124 +157,48 @@ export function ChatRoomView({
     [profile.wallpaperTheme]
   );
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
-    });
-  }, []);
-
-  const mergeIncomingMessage = useCallback(
-    (incoming: ChatMessage) => {
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === incoming.id)) {
-          return prev;
-        }
-        const next = [...prev, incoming].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        );
-        return next;
-      });
-      onLatestMessageUpdate(roomCode, incoming);
-
-      if (isNearBottomRef.current) {
-        scrollToBottom('smooth');
-      } else {
-        setShowScrollBottom(true);
-      }
-    },
-    [onLatestMessageUpdate, roomCode, scrollToBottom]
-  );
-
-  // Initial load + Realtime subscription (Supabase or Local Mock)
+  // Close presence popover when clicking outside
   useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setErrorMsg(null);
-    setMessages([]);
-
-    if (!isSupabaseConfigured) {
-      setRealtimeStatus('mock');
-      const localList = loadMockMessages(roomCode);
-      setMessages(localList);
-      setLoading(false);
-      if (localList.length > 0) {
-        onLatestMessageUpdate(roomCode, localList[localList.length - 1]);
+    if (!showOnlinePopover) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (
+        presenceContainerRef.current &&
+        !presenceContainerRef.current.contains(e.target as Node)
+      ) {
+        setShowOnlinePopover(false);
       }
-      scrollToBottom('auto');
-
-      const unsubscribeMock = subscribeToMockRoom(roomCode, (msg) => {
-        if (!active) return;
-        mergeIncomingMessage(msg);
-      });
-
-      return () => {
-        active = false;
-        unsubscribeMock();
-      };
-    }
-
-    // Supabase Realtime Mode
-    setRealtimeStatus('connecting');
-
-    fetchRoomMessagesFromSupabase(supabaseConfig, roomCode).then(({ data, error }) => {
-      if (!active) return;
-      if (error) {
-        setErrorMsg(`過去メッセージの取得に失敗しました: ${error}`);
-      } else {
-        setMessages(data);
-        if (data.length > 0) {
-          onLatestMessageUpdate(roomCode, data[data.length - 1]);
-        }
-        scrollToBottom('auto');
-      }
-      setLoading(false);
-    });
-
-    const unsubscribeSupabase = subscribeToSupabaseRoom(
-      supabaseConfig,
-      roomCode,
-      (msg) => {
-        if (!active) return;
-        mergeIncomingMessage(msg);
-      },
-      (status) => {
-        if (!active) return;
-        setRealtimeStatus(status);
-      }
-    );
-
-    return () => {
-      active = false;
-      unsubscribeSupabase();
     };
-  }, [
-    roomCode,
-    isSupabaseConfigured,
-    supabaseConfig.url,
-    supabaseConfig.anonKey,
-    mergeIncomingMessage,
-    onLatestMessageUpdate,
-    scrollToBottom,
-  ]);
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showOnlinePopover]);
 
-  // Auto-resize textarea height cleanly
+  // Reset room-scoped UI state when switching rooms
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
-  }, [inputText]);
-
-  const handleScroll = () => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = distanceFromBottom < 96;
-    isNearBottomRef.current = nearBottom;
-    if (nearBottom) {
-      setShowScrollBottom(false);
+    if (prevRoomRef.current !== roomCode) {
+      prevRoomRef.current = roomCode;
+      setIsEditingTitle(false);
+      setTitleDraft(roomTitle || '');
+      setLocalError(null);
+      setIsQrModalOpen(false);
+      setShowOnlinePopover(false);
+      setReplyingTo(null);
+      setDeleteTarget(null);
+      setLightboxImage(null);
     }
-  };
+  }, [roomCode, roomTitle]);
+
+  useEffect(() => {
+    if (!isEditingTitle) {
+      setTitleDraft(roomTitle || '');
+    }
+  }, [roomTitle, isEditingTitle]);
+
+  useEffect(() => {
+    if (isEditingTitle) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [isEditingTitle]);
 
   const handleCopyRoomCode = async () => {
     try {
@@ -240,206 +206,389 @@ export function ChatRoomView({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback copy via temporary input
       const temp = document.createElement('input');
-      temp.value = roomCode;
-      document.body.appendChild(temp);
-      temp.select();
-      document.execCommand('copy');
-      document.body.removeChild(temp);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      try {
+        temp.value = roomCode;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard copy unsupported in this browser context
+      } finally {
+        if (temp.parentNode) {
+          temp.parentNode.removeChild(temp);
+        }
+      }
     }
   };
 
-  const sendMessageContent = async (rawContent: string) => {
-    const content = rawContent.trim();
-    if (!content || sending) return;
-
-    const senderName = profile.nickname.trim() || 'ゲスト';
-    const senderAvatar =
-      profile.avatarType === 'preset' || profile.avatarType === 'custom'
-        ? profile.avatarValue
-        : '';
-
-    setErrorMsg(null);
-    setShowStamps(false);
-
-    if (!isSupabaseConfigured) {
-      const mockMessage: ChatMessage = {
-        id:
-          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-            ? crypto.randomUUID()
-            : `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        room_code: roomCode,
-        sender_name: senderName,
-        content,
-        created_at: new Date().toISOString(),
-        sender_id: profile.id,
-        sender_avatar: senderAvatar || null,
-        sender_color: profile.avatarColor,
-      };
-      appendMockMessage(roomCode, mockMessage);
-      isNearBottomRef.current = true;
-      mergeIncomingMessage(mockMessage);
-      setInputText('');
+  const handleSaveTitle = async () => {
+    if (savingTitle) return;
+    setSavingTitle(true);
+    setLocalError(null);
+    const err = await onUpdateRoomTitle(roomCode, titleDraft.trim());
+    setSavingTitle(false);
+    if (err) {
+      setLocalError(`タイトルの保存に失敗しました: ${err}`);
       return;
     }
-
-    setSending(true);
-    const { data, error } = await sendRoomMessageToSupabase(supabaseConfig, {
-      room_code: roomCode,
-      sender_name: senderName,
-      content,
-      sender_id: profile.id,
-      sender_avatar: senderAvatar || undefined,
-      sender_color: profile.avatarColor,
-    });
-    setSending(false);
-
-    if (error) {
-      setErrorMsg(`送信エラー: ${error}`);
-      return;
-    }
-
-    setInputText('');
-    isNearBottomRef.current = true;
-    if (data) {
-      mergeIncomingMessage(data);
-    }
+    setIsEditingTitle(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Prevent sending during Japanese IME composition
-    if (e.nativeEvent.isComposing || e.keyCode === 229) {
-      return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') {
       e.preventDefault();
-      void sendMessageContent(inputText);
+      void handleSaveTitle();
+    } else if (e.key === 'Escape') {
+      setIsEditingTitle(false);
+      setTitleDraft(roomTitle || '');
     }
   };
 
-  const handleSimulatePeerMessage = () => {
-    if (isSupabaseConfigured) return;
-    const peer = DEMO_PEER_SAMPLES[demoIndex % DEMO_PEER_SAMPLES.length];
-    const text = peer.texts[Math.floor(demoIndex / DEMO_PEER_SAMPLES.length) % peer.texts.length];
-    const mockPeerMsg: ChatMessage = {
-      id: `demo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      room_code: roomCode,
-      sender_name: peer.name,
-      content: text,
-      created_at: new Date().toISOString(),
-      sender_id: `peer_${peer.name}`,
-      sender_avatar: peer.avatar,
-      sender_color: peer.color,
-    };
-    setDemoIndex((prev) => prev + 1);
-    appendMockMessage(roomCode, mockPeerMsg);
-    isNearBottomRef.current = true;
-    mergeIncomingMessage(mockPeerMsg);
-  };
+  const handleConfirmDeleteMessage = useCallback(
+    async (msg: ChatMessage) => {
+      if (deletingMsg) return;
+      setDeletingMsg(true);
+      setLocalError(null);
+      const err = await onDeleteMessage(roomCode, msg.id);
+      setDeletingMsg(false);
+      if (err) {
+        setLocalError(`削除エラー: ${err}`);
+        return;
+      }
+      setDeleteTarget(null);
+    },
+    [deletingMsg, onDeleteMessage, roomCode]
+  );
 
-  const isOwnMessage = (msg: ChatMessage): boolean => {
-    if (msg.sender_id && profile.id) {
-      return msg.sender_id === profile.id;
-    }
-    return msg.sender_name === (profile.nickname.trim() || 'ゲスト');
-  };
+  const handleReactionFromList = useCallback(
+    (msg: ChatMessage, emoji: string) => {
+      void onToggleReaction(roomCode, msg, emoji).then((err) => {
+        if (err) {
+          setLocalError(`リアクション更新エラー: ${err}`);
+        }
+      });
+    },
+    [onToggleReaction, roomCode]
+  );
+
+  const handleClearReply = useCallback(() => {
+    setReplyingTo(null);
+  }, []);
+
+  const handleOpenQrModal = useCallback(() => {
+    setIsQrModalOpen(true);
+  }, []);
+
+  const handleCloseQrModal = useCallback(() => {
+    setIsQrModalOpen(false);
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setLightboxImage(null);
+  }, []);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+  }, []);
+
+  const combinedError = localError || errorMsg;
 
   return (
-    <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
+    <div className="h-full flex flex-col bg-[#F8FAFC] dark:bg-slate-950 overflow-hidden">
       {/* Chat Room Header */}
-      <header className="shrink-0 h-16 px-3 sm:px-5 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between gap-2 sm:gap-4 z-20">
-        {/* Left: Room Number + Copy */}
-        <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xl sm:text-2xl font-bold font-mono tabular-nums tracking-wider text-white whitespace-nowrap">
-                  {formatRoomCode(roomCode)}
+      <header className="shrink-0 min-h-[68px] px-3 sm:px-5 py-2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 sm:gap-3 z-20">
+        {/* Left: Back (mobile) + Room Title (editable) + 6-digit Code + Presence */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={onBackToLobby}
+            aria-label="トーク一覧へ戻る"
+            className="lg:hidden min-h-[40px] min-w-[40px] -ml-1 flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+
+          <div className="min-w-0 flex-1 space-y-1">
+            {/* Row 1: Editable Talk Title + Passcode indicator */}
+            {isEditingTitle ? (
+              <div className="flex items-center gap-1.5 max-w-md">
+                <input
+                  ref={titleInputRef}
+                  type="text"
+                  maxLength={40}
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={handleTitleKeyDown}
+                  placeholder={`ルーム ${formattedCode}`}
+                  className="flex-1 min-w-0 h-9 px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-emerald-500 text-sm font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/25"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleSaveTitle()}
+                  disabled={savingTitle}
+                  aria-label="タイトルを保存"
+                  className="h-9 px-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-medium flex items-center gap-1 transition-colors shrink-0"
+                >
+                  {savingTitle ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" />
+                  )}
+                  <span className="hidden sm:inline">保存</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingTitle(false);
+                    setTitleDraft(roomTitle || '');
+                  }}
+                  aria-label="タイトル編集をキャンセル"
+                  className="h-9 w-9 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center transition-colors shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 min-w-0">
+                {isLocked && (
+                  <Lock
+                    className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 shrink-0"
+                    aria-label="合言葉ロック有効"
+                  />
+                )}
+                <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
+                  {displayTitle}
+                </h1>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleDraft(roomTitle || '');
+                    setIsEditingTitle(true);
+                  }}
+                  title="トークタイトルを編集"
+                  aria-label="トークタイトルを編集"
+                  className="w-7 h-7 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center transition-colors shrink-0"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Row 2: 6-digit code + copy + QR + Online Presence + Connection status */}
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="inline-flex items-center gap-1.5">
+                <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200 tracking-wider">
+                  {formattedCode}
                 </span>
                 <button
                   type="button"
                   onClick={handleCopyRoomCode}
                   aria-label="ルーム番号をコピー"
-                  className={`min-h-[36px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
                     copied
-                      ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80'
+                      ? 'bg-emerald-100 dark:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}
                 >
                   {copied ? (
                     <>
-                      <Check className="w-3.5 h-3.5" />
+                      <Check className="w-3 h-3" />
                       <span>コピー済み</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span className="hidden xs:inline sm:inline">番号コピー</span>
+                      <Copy className="w-3 h-3" />
+                      <span>コピー</span>
                     </>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenQrModal}
+                  title="6桁ルーム番号のQRコードを表示"
+                  aria-label="QR表示"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 dark:bg-emerald-500/15 hover:bg-emerald-100 dark:hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-300 transition-colors whitespace-nowrap shrink-0"
+                >
+                  <QrCode className="w-3 h-3" />
+                  <span>QR表示</span>
+                </button>
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                {realtimeStatus === 'connected' && (
-                  <>
-                    <Wifi className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span className="text-emerald-400/90">Realtime 同期中</span>
-                  </>
+
+              <span aria-hidden="true" className="text-slate-300 dark:text-slate-600">
+                ·
+              </span>
+
+              {/* Online Members Presence Trigger + Popover */}
+              <div
+                ref={presenceContainerRef}
+                className="relative inline-flex items-center"
+                onMouseEnter={() => setShowOnlinePopover(true)}
+                onMouseLeave={() => setShowOnlinePopover(false)}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowOnlinePopover((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-300 hover:text-emerald-700 dark:hover:text-emerald-200 transition-colors whitespace-nowrap"
+                >
+                  <span
+                    className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="tabular-nums">
+                    {Math.max(onlineMembers.length, 1)}人オンライン
+                  </span>
+                </button>
+
+                {showOnlinePopover && (
+                  <div className="absolute left-0 top-full pt-2 z-40">
+                    <div className="w-60 max-w-[calc(100vw-2rem)] rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 shadow-xl dark:shadow-2xl p-3 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 dark:text-slate-200 pb-1.5 border-b border-slate-100 dark:border-slate-800">
+                        <span className="flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          オンラインメンバー
+                        </span>
+                        <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {Math.max(onlineMembers.length, 1)}
+                        </span>
+                      </div>
+
+                      <div className="max-h-48 overflow-y-auto chat-scroll space-y-1.5">
+                        {onlineMembers.map((member) => {
+                          const isMe = member.userId === profile.id;
+                          return (
+                            <div
+                              key={member.userId}
+                              className="flex items-center gap-2.5 py-1 px-1.5 rounded-lg"
+                            >
+                              <Avatar
+                                name={member.nickname}
+                                avatarValue={member.avatar}
+                                avatarColor={member.avatarColor}
+                                size="xs"
+                              />
+                              <span className="text-xs text-slate-900 dark:text-slate-100 truncate flex-1">
+                                {member.nickname}
+                              </span>
+                              {isMe && (
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 shrink-0">
+                                  あなた
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
                 )}
-                {realtimeStatus === 'connecting' && (
-                  <>
-                    <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
-                    <span>Supabase 接続中...</span>
-                  </>
-                )}
-                {realtimeStatus === 'error' && (
-                  <>
-                    <WifiOff className="w-3 h-3 text-rose-400 shrink-0" />
-                    <span className="text-rose-400">接続エラー</span>
-                  </>
-                )}
-                {realtimeStatus === 'mock' && (
-                  <>
-                    <MessageCircle className="w-3 h-3 text-blue-400 shrink-0" />
-                    <span>ローカルモード（別タブ同期対応）</span>
-                  </>
-                )}
-                <span aria-hidden="true" className="hidden sm:inline">
-                  ·
-                </span>
-                <span className="hidden sm:inline tabular-nums">
-                  {messages.length}件のメッセージ
-                </span>
               </div>
+
+              {(realtimeStatus === 'connected' ||
+                realtimeStatus === 'connecting' ||
+                realtimeStatus === 'error') && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="hidden md:inline text-slate-300 dark:text-slate-600"
+                  >
+                    ·
+                  </span>
+                  <div className="hidden md:inline-flex items-center gap-1">
+                    {realtimeStatus === 'connected' && (
+                      <>
+                        <Wifi className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span className="text-emerald-600 dark:text-emerald-400/90 font-medium">
+                          同期中
+                        </span>
+                      </>
+                    )}
+                    {realtimeStatus === 'connecting' && (
+                      <>
+                        <Loader2 className="w-3 h-3 text-sky-500 dark:text-sky-400 animate-spin shrink-0" />
+                        <span>接続中</span>
+                      </>
+                    )}
+                    {realtimeStatus === 'error' && (
+                      <>
+                        <WifiOff className="w-3 h-3 text-rose-500 dark:text-rose-400 shrink-0" />
+                        <span className="text-rose-600 dark:text-rose-400">エラー</span>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+
+              <span aria-hidden="true" className="hidden sm:inline text-slate-300 dark:text-slate-600">
+                ·
+              </span>
+
+              <span
+                title="ゼロ知識セキュリティ: ルーム番号・合言葉はSHA-256ハッシュ化、メッセージと引用はブラウザ内でAES-256-GCM暗号化されています"
+                className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-sky-600 dark:text-sky-300/90 whitespace-nowrap"
+              >
+                <ShieldCheck className="w-3 h-3 text-sky-500 dark:text-sky-400 shrink-0" />
+                <span>E2EE</span>
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Right: Actions (Demo peer in mock mode, Settings, Profile, Leave) */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {!isSupabaseConfigured && (
-            <button
-              type="button"
-              onClick={handleSimulatePeerMessage}
-              title="相手からのテストメッセージを受信して吹き出し表示を確認"
-              className="hidden md:flex min-h-[40px] px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-xs font-medium text-slate-200 items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-            >
-              <UserPlus className="w-3.5 h-3.5 text-blue-400" />
-              相手メッセージテスト
-            </button>
-          )}
+        {/* Right: Actions */}
+        <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
+          {/* 4-Digit Passcode Lock Button */}
+          <button
+            type="button"
+            onClick={onOpenPasscodeManage}
+            title={
+              isLocked
+                ? '合言葉ロック設定中（クリックで変更・解除）'
+                : '4桁の合言葉ロックを設定'
+            }
+            aria-label="ルームの合言葉ロック設定"
+            className={`min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl transition-colors shrink-0 ${
+              isLocked
+                ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-200/80 dark:hover:bg-amber-500/25'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            {isLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+          </button>
+
+          {/* Report User Button */}
+          <button
+            type="button"
+            onClick={() => onOpenReportModal()}
+            title="問題のあるユーザーを通報する"
+            aria-label="通報する"
+            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+          >
+            <Flag className="w-4 h-4" />
+          </button>
+
+          {/* One-Tap Camouflage (Boss Key Calculator) Button */}
+          <button
+            type="button"
+            onClick={onActivateCamouflage}
+            title="電卓画面へ切り替え（緊急隠蔽）"
+            aria-label="電卓画面へ切り替え"
+            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+          >
+            <Calculator className="w-4 h-4" />
+          </button>
 
           <button
             type="button"
             onClick={onOpenProfile}
             aria-label="プロフィール設定"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-slate-800 transition-colors shrink-0"
+            className="hidden sm:flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
           >
             <Avatar
-              name={profile.nickname || 'ゲスト'}
+              name={myNickname}
               avatarType={profile.avatarType}
               avatarValue={profile.avatarValue}
               avatarColor={profile.avatarColor}
@@ -450,16 +599,16 @@ export function ChatRoomView({
           <button
             type="button"
             onClick={onOpenSettings}
-            aria-label="Supabase接続設定"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
+            aria-label="ユーザー設定を開く"
+            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
           >
             <Settings className="w-4 h-4" />
           </button>
 
           <button
             type="button"
-            onClick={onLeaveRoom}
-            className="min-h-[40px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/70 hover:text-rose-200 border border-slate-700/60 hover:border-rose-800/70 text-xs sm:text-sm font-medium text-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+            onClick={() => onRequestLeaveRoom(roomCode)}
+            className="min-h-[36px] sm:min-h-[40px] px-2 sm:px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/70 hover:text-rose-600 dark:hover:text-rose-200 border border-slate-200 dark:border-slate-700/60 hover:border-rose-200 dark:hover:border-rose-800/70 text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 flex items-center gap-1 sm:gap-1.5 transition-colors whitespace-nowrap shrink-0"
           >
             <LogOut className="w-4 h-4" />
             <span>退室</span>
@@ -467,241 +616,100 @@ export function ChatRoomView({
         </div>
       </header>
 
-      {/* Error banner if Supabase error occurs */}
-      {errorMsg && (
-        <div className="shrink-0 px-4 py-2.5 bg-rose-950/80 border-b border-rose-800/70 text-xs text-rose-200 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span className="truncate">{errorMsg}</span>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="text-xs font-semibold text-white underline underline-offset-2 shrink-0"
-          >
-            接続設定を確認
-          </button>
+      {/* Error banner */}
+      {combinedError && (
+        <div className="shrink-0 px-4 py-2.5 bg-rose-50 dark:bg-rose-950/80 border-b border-rose-200 dark:border-rose-800/70 text-xs text-rose-700 dark:text-rose-200 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0" />
+          <span className="truncate">{combinedError}</span>
         </div>
       )}
 
-      {/* Message Stream Area */}
-      <div
-        ref={scrollContainerRef}
-        onScroll={handleScroll}
-        className={`relative flex-1 overflow-y-auto chat-scroll px-3 sm:px-6 py-5 ${wallpaperTheme.bgClass}`}
-      >
-        <div className="max-w-3xl mx-auto space-y-4">
-          {loading ? (
-            <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-400">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-              <p className="text-xs">トーク履歴を読み込んでいます...</p>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="py-16 sm:py-24 flex flex-col items-center justify-center text-center space-y-4 px-4">
-              <div className="w-14 h-14 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-center text-blue-400">
-                <MessageCircle className="w-7 h-7" />
-              </div>
-              <div className="space-y-1.5 max-w-sm">
-                <p className="text-sm font-semibold text-slate-100">
-                  ルーム {formatRoomCode(roomCode)} に入室しました
-                </p>
-                <p className="text-xs leading-relaxed text-slate-400">
-                  まだメッセージはありません。最初のメッセージを送るか、上の番号コピーボタンでルーム番号を共有して会話を始めましょう。
-                </p>
-              </div>
+      {/* Memoized Message Stream Area (Never re-renders on inputText or onlineMembers typing changes) */}
+      <ChatMessageList
+        roomCode={roomCode}
+        displayTitle={displayTitle}
+        formattedCode={formattedCode}
+        messages={messages}
+        loading={loading}
+        profileId={profile.id}
+        myNickname={myNickname}
+        myBubbleClass={myBubbleTheme.bubbleClass}
+        wallpaperBgClass={wallpaperTheme.bgClass}
+        onStartReply={setReplyingTo}
+        onToggleReaction={handleReactionFromList}
+        onRequestDelete={setDeleteTarget}
+        onOpenReportModal={onOpenReportModal}
+        onOpenLightbox={setLightboxImage}
+        onOpenQrModal={handleOpenQrModal}
+      />
 
-              {!isSupabaseConfigured && (
-                <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleSimulatePeerMessage}
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 flex items-center gap-2 transition-colors whitespace-nowrap"
-                  >
-                    <UserPlus className="w-4 h-4 text-blue-400" />
-                    相手からのテストメッセージを受信
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onOpenSettings}
-                    className="min-h-[42px] px-4 py-2 rounded-xl bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-xs font-medium text-blue-300 flex items-center gap-2 transition-colors whitespace-nowrap"
-                  >
-                    <Settings className="w-4 h-4" />
-                    Supabase Realtimeを設定
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            messages.map((msg, index) => {
-              const mine = isOwnMessage(msg);
-              const prevMsg = index > 0 ? messages[index - 1] : null;
-              const currentDateLabel = formatDateDivider(msg.created_at);
-              const prevDateLabel = prevMsg ? formatDateDivider(prevMsg.created_at) : null;
-              const showDateDivider = currentDateLabel !== prevDateLabel;
-
-              const timeLabel = formatTimeHHMM(msg.created_at);
-
-              return (
-                <div key={msg.id} className="space-y-3">
-                  {/* LINE-style centered date divider */}
-                  {showDateDivider && currentDateLabel && (
-                    <div className="flex justify-center py-2">
-                      <span className="px-3.5 py-1 rounded-full bg-slate-900/85 border border-slate-800/80 text-[11px] font-medium text-slate-400 tabular-nums">
-                        {currentDateLabel}
-                      </span>
-                    </div>
-                  )}
-
-                  {mine ? (
-                    /* Own message (Right-aligned, blue accent by default) */
-                    <div className="flex flex-col items-end">
-                      <span className="text-[11px] text-slate-400 mb-1 pr-1">
-                        {msg.sender_name}
-                      </span>
-                      <div className="flex items-end justify-end gap-1.5 max-w-[85%] sm:max-w-[72%]">
-                        <div className="flex flex-col items-end shrink-0 pb-0.5">
-                          <span className="text-[10px] text-slate-500 font-mono tabular-nums leading-none">
-                            {timeLabel}
-                          </span>
-                        </div>
-                        <div
-                          className={`px-3.5 py-2.5 rounded-2xl bubble-tail-right text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm ${myBubbleTheme.bubbleClass}`}
-                        >
-                          {msg.content}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Other's message (Left-aligned, dark slate-gray) */
-                    <div className="flex items-start gap-2.5 max-w-[88%] sm:max-w-[75%]">
-                      <Avatar
-                        name={msg.sender_name}
-                        avatarValue={msg.sender_avatar}
-                        avatarColor={msg.sender_color}
-                        size="sm"
-                        className="mt-1"
-                      />
-                      <div className="min-w-0 flex flex-col items-start">
-                        <span className="text-[11px] text-slate-400 mb-1 pl-0.5">
-                          {msg.sender_name}
-                        </span>
-                        <div className="flex items-end gap-1.5 max-w-full">
-                          <div className="px-3.5 py-2.5 rounded-2xl bubble-tail-left bg-slate-800/95 border border-slate-700/50 text-slate-100 text-sm leading-relaxed whitespace-pre-wrap break-words shadow-sm">
-                            {msg.content}
-                          </div>
-                          <span className="text-[10px] text-slate-500 font-mono tabular-nums shrink-0 pb-0.5 leading-none">
-                            {timeLabel}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-          <div ref={bottomRef} className="h-1" />
-        </div>
-
-        {/* Scroll to latest floating button */}
-        {showScrollBottom && (
-          <button
-            type="button"
-            onClick={() => {
-              isNearBottomRef.current = true;
-              setShowScrollBottom(false);
-              scrollToBottom('smooth');
-            }}
-            aria-label="最新メッセージへ移動"
-            className="fixed bottom-24 right-5 sm:right-8 z-30 min-h-[40px] px-3.5 py-2 rounded-full bg-slate-900/95 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-100 shadow-lg flex items-center gap-1.5 transition-colors"
-          >
-            <ArrowDown className="w-3.5 h-3.5 text-blue-400" />
-            最新へ
-          </button>
-        )}
-      </div>
-
-      {/* Quick Stamp Tray (LINE-like quick replies) */}
-      {showStamps && (
-        <div className="shrink-0 bg-slate-900 border-t border-slate-800 px-3 sm:px-6 py-3">
-          <div className="max-w-3xl mx-auto space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-400">
-                クイックスタンプ（タップで即送信）
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowStamps(false)}
-                aria-label="スタンプを閉じる"
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {QUICK_STAMPS.map((stamp) => (
-                <button
-                  key={stamp.id}
-                  type="button"
-                  onClick={() => void sendMessageContent(`${stamp.emoji} ${stamp.text}`)}
-                  className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-left flex items-center gap-2 transition-colors"
-                >
-                  <span className="text-lg shrink-0" aria-hidden="true">
-                    {stamp.emoji}
-                  </span>
-                  <span className="text-xs font-medium text-slate-200 truncate">
-                    {stamp.text}
-                  </span>
-                </button>
-              ))}
-            </div>
+      {/* Real-time Typing Indicator Bar (just above input footer) */}
+      {typingIndicatorText && (
+        <div
+          aria-live="polite"
+          className="shrink-0 bg-white/90 dark:bg-slate-950/90 border-t border-slate-200/80 dark:border-slate-800/70 px-4 sm:px-6 py-1.5"
+        >
+          <div className="max-w-3xl mx-auto flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-bounce"
+                style={{ animationDelay: '0ms', animationDuration: '900ms' }}
+              />
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-bounce"
+                style={{ animationDelay: '150ms', animationDuration: '900ms' }}
+              />
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-bounce"
+                style={{ animationDelay: '300ms', animationDuration: '900ms' }}
+              />
+            </span>
+            <span className="truncate font-medium text-slate-700 dark:text-slate-300">
+              {typingIndicatorText}
+            </span>
           </div>
         </div>
       )}
 
-      {/* Input Footer */}
-      <footer className="shrink-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3 sm:px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-3xl mx-auto flex items-end gap-2">
-          <button
-            type="button"
-            onClick={() => setShowStamps((prev) => !prev)}
-            aria-label="クイックスタンプを開く"
-            className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl transition-colors shrink-0 ${
-              showStamps
-                ? 'bg-blue-600/20 text-blue-400'
-                : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
-            }`}
-          >
-            <Smile className="w-5 h-5" />
-          </button>
+      {/* Isolated Memoized Input Composer */}
+      <ChatComposer
+        roomCode={roomCode}
+        customStickers={customStickers}
+        replyingTo={replyingTo}
+        onClearReply={handleClearReply}
+        onSendMessage={onSendMessage}
+        onSendSticker={onSendSticker}
+        onTypingChange={onTypingChange}
+        onAddCustomSticker={onAddCustomSticker}
+        onDeleteCustomSticker={onDeleteCustomSticker}
+        onError={setLocalError}
+      />
 
-          <div className="flex-1 min-w-0 bg-slate-950 border border-slate-800 focus-within:border-blue-500/80 focus-within:ring-2 focus-within:ring-blue-500/20 rounded-2xl px-3.5 py-2 transition-all">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="メッセージを入力（Enterで送信 / Shift+Enterで改行）"
-              className="w-full max-h-32 resize-none bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none leading-6"
-            />
-          </div>
+      {/* Delete Message Confirmation Modal (Mounted only when open) */}
+      {deleteTarget && (
+        <DeleteMessageModal
+          message={deleteTarget}
+          deleting={deletingMsg}
+          onCancel={handleCancelDelete}
+          onConfirm={(msg) => void handleConfirmDeleteMessage(msg)}
+        />
+      )}
 
-          <button
-            type="button"
-            onClick={() => void sendMessageContent(inputText)}
-            disabled={!inputText.trim() || sending}
-            aria-label="メッセージを送信"
-            className="min-h-[44px] min-w-[44px] px-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 disabled:bg-slate-800 disabled:text-slate-500 disabled:pointer-events-none text-white flex items-center justify-center transition-all shrink-0"
-          >
-            {sending ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Send className="w-5 h-5" />
-            )}
-          </button>
-        </div>
-      </footer>
+      {/* Pure 6-digit Room QR Code Modal (Mounted only when open) */}
+      {isQrModalOpen && (
+        <RoomQrModal
+          isOpen={isQrModalOpen}
+          roomCode={roomCode}
+          roomTitle={displayTitle}
+          hasPasscode={isLocked}
+          onClose={handleCloseQrModal}
+        />
+      )}
+
+      {/* Image Lightbox Modal (Mounted only when open) */}
+      {lightboxImage && (
+        <ImageLightbox image={lightboxImage} onClose={handleCloseLightbox} />
+      )}
     </div>
   );
-}
+});
