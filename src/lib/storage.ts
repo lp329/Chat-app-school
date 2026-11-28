@@ -9,6 +9,8 @@ import type {
   BoomPost,
   ChatMessage,
   CustomSticker,
+  FeatureRequest,
+  FeatureRequestStatus,
   OfficialAnnouncement,
   OnlineMember,
   ReactionMap,
@@ -33,6 +35,7 @@ const MOCK_ROOMS_META_KEY = 'roomline_mock_rooms_meta_v2';
 const MOCK_BOOM_POSTS_KEY = 'roomline_mock_boom_posts_v1';
 const MOCK_OFFICIAL_ANNOUNCEMENTS_KEY = 'roomline_mock_official_announcements_v1';
 const MOCK_REPORTS_KEY = 'roomline_mock_reports_v1';
+const MOCK_FEATURE_REQUESTS_KEY = 'roomline_mock_feature_requests_v1';
 const MOCK_MAINTENANCE_KEY = 'roomline_mock_maintenance_mode_v1';
 const LEGACY_MOCK_TITLES_KEY = 'roomline_mock_room_titles_v1';
 const BROADCAST_CHANNEL_NAME = 'roomline_mock_realtime_channel';
@@ -606,6 +609,111 @@ export function deleteMockReport(reportId: string): void {
   broadcastMockEvent({ type: 'MOCK_REPORT_DELETE', reportId });
 }
 
+// --- Local Mock Feature Requests (`feature_requests`) ---
+
+function getInitialMockFeatureRequests(): FeatureRequest[] {
+  const now = Date.now();
+  return [
+    {
+      id: 'mock_feat_search_1',
+      title: 'トークルーム内のキーワード検索機能',
+      description: '過去のメッセージから特定の言葉や日付ですぐに探せるようにしてほしいです。',
+      author_name: 'ミキ',
+      votes: 5,
+      voted_user_ids: ['seed_u1', 'seed_u2', 'seed_u3', 'seed_u4', 'seed_u5'],
+      status: '開発中',
+      created_at: new Date(now - 1000 * 60 * 60 * 5).toISOString(),
+    },
+    {
+      id: 'mock_feat_pin_2',
+      title: '大事なメッセージをルーム上部にピン留めしたい',
+      description: '待ち合わせ場所や日程調整の連絡を見失わないようにピン留めできると嬉しいです。',
+      author_name: 'レン',
+      votes: 3,
+      voted_user_ids: ['seed_u1', 'seed_u2', 'seed_u3'],
+      status: '検討中',
+      created_at: new Date(now - 1000 * 60 * 60 * 14).toISOString(),
+    },
+  ];
+}
+
+export function loadMockFeatureRequests(): FeatureRequest[] {
+  try {
+    const raw = localStorage.getItem(MOCK_FEATURE_REQUESTS_KEY);
+    if (!raw) {
+      const seeded = getInitialMockFeatureRequests();
+      localStorage.setItem(MOCK_FEATURE_REQUESTS_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw) as FeatureRequest[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        const votedIds = Array.isArray(item.voted_user_ids)
+          ? item.voted_user_ids.filter((v): v is string => typeof v === 'string')
+          : [];
+        const status: FeatureRequestStatus =
+          item.status === '開発中' || item.status === '実装済み' ? item.status : '検討中';
+        return {
+          ...item,
+          description: typeof item.description === 'string' ? item.description : '',
+          author_name: typeof item.author_name === 'string' ? item.author_name : '匿名',
+          voted_user_ids: votedIds,
+          votes: typeof item.votes === 'number' ? item.votes : votedIds.length,
+          status,
+        };
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  } catch {
+    return [];
+  }
+}
+
+export function createMockFeatureRequest(item: FeatureRequest): FeatureRequest {
+  const existing = loadMockFeatureRequests();
+  const next = [item, ...existing.filter((r) => r.id !== item.id)];
+  try {
+    localStorage.setItem(MOCK_FEATURE_REQUESTS_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore
+  }
+  broadcastMockEvent({ type: 'MOCK_FEATURE_REQUEST_INSERT', request: item });
+  return item;
+}
+
+export function updateMockFeatureRequest(
+  requestId: string,
+  updater: (req: FeatureRequest) => FeatureRequest
+): FeatureRequest | null {
+  const existing = loadMockFeatureRequests();
+  let updated: FeatureRequest | null = null;
+  const next = existing.map((r) => {
+    if (r.id !== requestId) return r;
+    updated = updater(r);
+    return updated;
+  });
+  if (updated) {
+    try {
+      localStorage.setItem(MOCK_FEATURE_REQUESTS_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore
+    }
+    broadcastMockEvent({ type: 'MOCK_FEATURE_REQUEST_UPDATE', request: updated });
+  }
+  return updated;
+}
+
+export function deleteMockFeatureRequest(requestId: string): void {
+  const existing = loadMockFeatureRequests();
+  const next = existing.filter((r) => r.id !== requestId);
+  try {
+    localStorage.setItem(MOCK_FEATURE_REQUESTS_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore
+  }
+  broadcastMockEvent({ type: 'MOCK_FEATURE_REQUEST_DELETE', requestId });
+}
+
 // --- Local Mock Maintenance Mode & Admin Stats / Purge ---
 
 export function loadMockMaintenanceMode(): boolean {
@@ -699,6 +807,9 @@ type MockBroadcastPayload =
   | { type: 'MOCK_REPORT_INSERT'; report: UserReport }
   | { type: 'MOCK_REPORT_UPDATE'; report: UserReport }
   | { type: 'MOCK_REPORT_DELETE'; reportId: string }
+  | { type: 'MOCK_FEATURE_REQUEST_INSERT'; request: FeatureRequest }
+  | { type: 'MOCK_FEATURE_REQUEST_UPDATE'; request: FeatureRequest }
+  | { type: 'MOCK_FEATURE_REQUEST_DELETE'; requestId: string }
   | { type: 'MOCK_MAINTENANCE_UPDATE'; enabled: boolean };
 
 function broadcastMockEvent(payload: MockBroadcastPayload): void {
@@ -725,6 +836,9 @@ export function subscribeToAllMockEvents(handlers: {
   onReportInsert?: (report: UserReport) => void;
   onReportUpdate?: (report: UserReport) => void;
   onReportDelete?: (reportId: string) => void;
+  onFeatureRequestInsert?: (request: FeatureRequest) => void;
+  onFeatureRequestUpdate?: (request: FeatureRequest) => void;
+  onFeatureRequestDelete?: (requestId: string) => void;
   onMaintenanceUpdate?: (enabled: boolean) => void;
 }): () => void {
   let channel: BroadcastChannel | null = null;
@@ -758,6 +872,12 @@ export function subscribeToAllMockEvents(handlers: {
           handlers.onReportUpdate?.(data.report);
         } else if (data.type === 'MOCK_REPORT_DELETE' && data.reportId) {
           handlers.onReportDelete?.(data.reportId);
+        } else if (data.type === 'MOCK_FEATURE_REQUEST_INSERT' && data.request) {
+          handlers.onFeatureRequestInsert?.(data.request);
+        } else if (data.type === 'MOCK_FEATURE_REQUEST_UPDATE' && data.request) {
+          handlers.onFeatureRequestUpdate?.(data.request);
+        } else if (data.type === 'MOCK_FEATURE_REQUEST_DELETE' && data.requestId) {
+          handlers.onFeatureRequestDelete?.(data.requestId);
         } else if (data.type === 'MOCK_MAINTENANCE_UPDATE') {
           handlers.onMaintenanceUpdate?.(Boolean(data.enabled));
         }

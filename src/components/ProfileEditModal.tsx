@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
+  ChevronRight,
   Dices,
+  KeyRound,
+  Lightbulb,
   Moon,
   Palette,
+  QrCode,
+  RefreshCw,
   Settings,
   Sun,
   Wallpaper,
@@ -28,6 +33,8 @@ interface ProfileEditModalProps {
   themeMode: ThemeMode;
   onUpdateProfile: (next: UserProfile) => void;
   onChangeThemeMode: (mode: ThemeMode) => void;
+  onOpenAccountTransfer: (tab: 'export' | 'import') => void;
+  onOpenFeatureRequests: () => void;
   onClose: () => void;
 }
 
@@ -37,6 +44,8 @@ export function ProfileEditModal({
   themeMode,
   onUpdateProfile,
   onChangeThemeMode,
+  onOpenAccountTransfer,
+  onOpenFeatureRequests,
   onClose,
 }: ProfileEditModalProps) {
   const [draft, setDraft] = useState<UserProfile>(profile);
@@ -548,6 +557,66 @@ export function ProfileEditModal({
               </div>
             </div>
           </div>
+
+          <div className="h-px bg-slate-200 dark:bg-slate-800" />
+
+          {/* Account Transfer / Backup & Restore Section */}
+          <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/70 p-4 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  アカウント引き継ぎ設定
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
+                  プロフィール・トーク履歴・合言葉を暗号化して別端末へ安全に引き継ぎできます
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => onOpenAccountTransfer('export')}
+                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+              >
+                <QrCode className="w-4 h-4 shrink-0" />
+                <span>引き継ぎコード・QRを発行</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenAccountTransfer('import')}
+                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <span>引き継ぎコードから復元</span>
+              </button>
+            </div>
+          </section>
+
+          {/* Feature Request & Voting Box Entry */}
+          <button
+            type="button"
+            onClick={onOpenFeatureRequests}
+            className="w-full min-h-[56px] p-3.5 rounded-xl border border-amber-200/90 dark:border-amber-500/30 bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-950/20 dark:hover:bg-amber-950/35 flex items-center justify-between gap-3 text-left transition-colors"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Lightbulb className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="block text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                  改善要望・投票ボックス
+                </span>
+                <span className="block text-[11px] text-slate-600 dark:text-slate-400 truncate">
+                  ほしい機能の投稿やみんなの要望への投票はこちら
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
         </div>
 
         {/* Footer */}

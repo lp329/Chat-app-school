@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ImagePlus, Loader2, Reply, Send, Smile, X } from 'lucide-react';
+import { Gamepad2, ImagePlus, Loader2, Reply, Send, Smile, X } from 'lucide-react';
 import type { CustomSticker, ReplyReference } from '../types/chat';
 import { StickerPicker } from './StickerPicker';
 
@@ -8,6 +8,7 @@ interface ChatComposerProps {
   customStickers: CustomSticker[];
   replyingTo: ReplyReference | null;
   onClearReply: () => void;
+  onOpenMiniGameLauncher: () => void;
   onSendMessage: (
     roomCode: string,
     content: string,
@@ -33,6 +34,7 @@ export const ChatComposer = memo(function ChatComposer({
   customStickers,
   replyingTo,
   onClearReply,
+  onOpenMiniGameLauncher,
   onSendMessage,
   onSendSticker,
   onTypingChange,
@@ -361,6 +363,21 @@ export const ChatComposer = memo(function ChatComposer({
             }`}
           >
             <Smile className="w-5 h-5" />
+          </button>
+
+          {/* Online Mini-Games Launcher Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowStamps(false);
+              onOpenMiniGameLauncher();
+            }}
+            disabled={sending}
+            title="ミニゲームで対戦"
+            aria-label="ミニゲームを開く"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/15 transition-colors shrink-0"
+          >
+            <Gamepad2 className="w-5 h-5" />
           </button>
 
           {/* Message Input */}

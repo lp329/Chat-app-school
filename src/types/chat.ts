@@ -149,6 +149,166 @@ export interface AdminSystemStats {
   pendingReports: number;
 }
 
+export type FeatureRequestStatus = '検討中' | '開発中' | '実装済み';
+
+export interface FeatureRequest {
+  id: string;
+  title: string;
+  description: string;
+  author_name: string;
+  votes: number;
+  voted_user_ids: string[];
+  status: FeatureRequestStatus;
+  created_at: string;
+}
+
+export interface AccountTransferPayload {
+  version: 1;
+  exportedAt: string;
+  profile: UserProfile;
+  recentRooms: RoomHistoryItem[];
+  roomPasscodes: Record<string, string>;
+  customStickers: CustomSticker[];
+  themeMode: ThemeMode;
+  officialLastReadAt: string | null;
+}
+
 export type ActiveTab = 'rooms' | 'boom' | 'profile';
 
 export type ThemeMode = 'light' | 'dark';
+
+export type CallType = 'audio' | 'video';
+
+export type CallStatus =
+  | 'idle'
+  | 'calling'
+  | 'ringing'
+  | 'connecting'
+  | 'connected';
+
+export interface CallPeerInfo {
+  userId: string;
+  nickname: string;
+  avatar?: string | null;
+  avatarColor?: string | null;
+}
+
+export type WebRtcSignalType =
+  | 'call-invite'
+  | 'call-accept'
+  | 'call-reject'
+  | 'call-end'
+  | 'offer'
+  | 'answer'
+  | 'ice-candidate'
+  | 'media-state';
+
+export interface WebRtcSignalPayload {
+  type: WebRtcSignalType;
+  callId: string;
+  fromUserId: string;
+  fromNickname: string;
+  fromAvatar?: string | null;
+  fromAvatarColor?: string | null;
+  toUserId?: string;
+  callType?: CallType;
+  sdp?: RTCSessionDescriptionInit;
+  renegotiate?: boolean;
+  candidate?: RTCIceCandidateInit;
+  reason?: 'rejected' | 'cancelled' | 'busy';
+  videoEnabled?: boolean;
+  audioMuted?: boolean;
+}
+
+export type MiniGameId = 'reaction' | 'draw_guess' | 'reversi';
+
+export interface MiniGamePlayer {
+  userId: string;
+  nickname: string;
+  avatar?: string | null;
+  avatarColor?: string | null;
+}
+
+export interface MiniGameInvitePayload {
+  matchId: string;
+  gameId: MiniGameId;
+  host: MiniGamePlayer;
+  createdAt: string;
+}
+
+export interface MiniGameResultPayload {
+  matchId: string;
+  gameId: MiniGameId;
+  headline: string;
+  detail: string;
+  winnerName?: string | null;
+  createdAt: string;
+}
+
+export interface DrawStrokeSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  width: number;
+}
+
+export type MiniGameSyncEventType =
+  | 'join-match'
+  | 'match-start'
+  | 'match-leave'
+  | 'rematch-request'
+  | 'rematch-accept'
+  | 'reaction-arm'
+  | 'reaction-go'
+  | 'reaction-tap'
+  | 'reaction-round-end'
+  | 'draw-round-start'
+  | 'draw-stroke'
+  | 'draw-clear'
+  | 'draw-guess'
+  | 'draw-correct'
+  | 'draw-timeout'
+  | 'reversi-move';
+
+export interface MiniGameSyncPayload {
+  eventType: MiniGameSyncEventType;
+  matchId: string;
+  gameId: MiniGameId;
+  fromUserId: string;
+  fromNickname: string;
+  fromAvatar?: string | null;
+  fromAvatarColor?: string | null;
+  toUserId?: string;
+  host?: MiniGamePlayer;
+  guest?: MiniGamePlayer;
+  // Reaction Battle fields
+  round?: number;
+  reactionMs?: number;
+  foul?: boolean;
+  hostScore?: number;
+  guestScore?: number;
+  roundWinnerId?: string | null;
+  roundSummary?: string;
+  bestMs?: number | null;
+  // Draw & Guess fields
+  drawerId?: string;
+  promptId?: string;
+  promptWord?: string;
+  promptHintLength?: number;
+  strokes?: DrawStrokeSegment[];
+  guessText?: string;
+  pointsAwarded?: number;
+  // Reversi fields
+  board?: number[];
+  nextTurn?: 1 | 2;
+  lastMoveIndex?: number;
+  passedPlayer?: 1 | 2 | null;
+  gameOver?: boolean;
+  blackCount?: number;
+  whiteCount?: number;
+  winnerSide?: 0 | 1 | 2;
+}
+
+

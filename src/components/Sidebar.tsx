@@ -3,6 +3,7 @@ import {
   BadgeCheck,
   Calculator,
   Hash,
+  Lightbulb,
   Lock,
   MessageCircle,
   Moon,
@@ -45,6 +46,7 @@ interface SidebarProps {
   onOpenJoinRoom: () => void;
   onOpenProfileModal: () => void;
   onOpenSettings: () => void;
+  onOpenFeatureRequests: () => void;
   onActivateCamouflage: () => void;
 }
 
@@ -65,6 +67,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenJoinRoom,
   onOpenProfileModal,
   onOpenSettings,
+  onOpenFeatureRequests,
   onActivateCamouflage,
 }: SidebarProps) {
   const isOfficialActive =
@@ -126,6 +129,16 @@ export const Sidebar = memo(function Sidebar({
               }`}
             >
               <PlaySquare className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={onOpenFeatureRequests}
+              title="改善要望・投票ボックス"
+              aria-label="改善要望・投票ボックスを開く"
+              className="w-11 h-11 rounded-xl flex items-center justify-center text-amber-500 dark:text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors"
+            >
+              <Lightbulb className="w-5 h-5" />
             </button>
           </div>
 

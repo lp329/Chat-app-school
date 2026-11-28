@@ -4,6 +4,8 @@ import type {
   AdminSystemStats,
   BoomComment,
   BoomPost,
+  FeatureRequest,
+  FeatureRequestStatus,
   OfficialAnnouncement,
   OnlineMember,
   ReactionMap,
@@ -1262,4 +1264,210 @@ export async function purgeOldMessagesFromSupabase(
 
   if (error) return { deletedCount: 0, error: error.message };
   return { deletedCount: Array.isArray(data) ? data.length : 0, error: null };
+}
+
+// --- Feature Requests & Voting (`feature_requests` table) ---
+
+function normalizeFeatureRequestStatus(raw: unknown): FeatureRequestStatus {
+  const s = String(raw || '').trim();
+  if (s === '開発中' || s === 'in_progress' || s === 'developing') return '開発中';
+  if (s === '実装済み' || s === 'implemented' || s === 'done' || s === 'completed') {
+    return '実装済み';
+  }
+  return '検討中';
+}
+
+function normalizeFeatureRequest(raw: Record<string, unknown>): FeatureRequest {
+  const votedIds = Array.isArray(raw.voted_user_ids)
+    ? Array.from(
+        new Set(
+          raw.voted_user_ids.filter(
+            (v): v is string => typeof v === 'string' && v.trim().length > 0
+          )
+        )
+      )
+    : [];
+  const rawVotes = typeof raw.votes === 'number' && !Number.isNaN(raw.votes)
+    ? Math.max(0, raw.votes)
+    : votedIds.length;
+
+  return {
+    id: String(raw.id || ''),
+    title: String(raw.title || ''),
+    description: typeof raw.description === 'string' ? raw.description : '',
+    author_name:
+      typeof raw.author_name === 'string' && raw.author_name.trim()
+        ? raw.author_name.trim()
+        : '匿名',
+    votes: Math.max(rawVotes, votedIds.length),
+    voted_user_ids: votedIds,
+    status: normalizeFeatureRequestStatus(raw.status),
+    created_at: String(raw.created_at || new Date().toISOString()),
+  };
+}
+
+export async function fetchFeatureRequestsFromSupabase(
+  config: SupabaseConfig
+): Promise<{ data: FeatureRequest[]; error: string | null }> {
+  const client = getSupabaseClient(config);
+  if (!client) return { data: [], error: 'Supabase設定が無効です。' };
+
+  const { data, error } = await client
+    .from('feature_requests')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) return { data: [], error: error.message };
+  return {
+    data: ((data || []) as Record<string, unknown>[]).map(normalizeFeatureRequest),
+    error: null,
+  };
+}
+
+export async function createFeatureRequestInSupabase(
+  config: SupabaseConfig,
+  payload: { title: string; description: string; author_name: string }
+): Promise<{ data: FeatureRequest | null; error: string | null }> {
+  const client = getSupabaseClient(config);
+  if (!client) return { data: null, error: 'Supabase設定が無効です。' };
+
+  const { data, error } = await client
+    .from('feature_requests')
+    .insert([
+      {
+        title: payload.title.trim(),
+        description: payload.description.trim(),
+        author_name: payload.author_name.trim() || '匿名',
+        votes: 0,
+        voted_user_ids: [],
+        status: '検討中',
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) return { data: null, error: error.message };
+  return {
+    data: normalizeFeatureRequest(data as Record<string, unknown>),
+    error: null,
+  };
+}
+
+export async function updateFeatureRequestVotesInSupabase(
+  config: SupabaseConfig,
+  requestId: string,
+  votedUserIds: string[]
+): Promise<{ data: FeatureRequest | null; error: string | null }> {
+  const client = getSupabaseClient(config);
+  if (!client) return { data: null, error: 'Supabase設定が無効です。' };
+
+  const uniqueIds = Array.from(
+    new Set(votedUserIds.filter((v) => typeof v === 'string' && v.trim().length > 0))
+  );
+
+  const { data, error } = await client
+    .from('feature_requests')
+    .update({
+      voted_user_ids: uniqueIds,
+      votes: uniqueIds.length,
+    })
+    .eq('id', requestId)
+    .select()
+    .single();
+
+  if (error) return { data: null, error: error.message };
+  return {
+    data: normalizeFeatureRequest(data as Record<string, unknown>),
+    error: null,
+  };
+}
+
+export async function updateFeatureRequestStatusInSupabase(
+  config: SupabaseConfig,
+  requestId: string,
+  status: FeatureRequestStatus
+): Promise<{ data: FeatureRequest | null; error: string | null }> {
+  const client = getSupabaseClient(config);
+  if (!client) return { data: null, error: 'Supabase設定が無効です。' };
+
+  const { data, error } = await client
+    .from('feature_requests')
+    .update({ status })
+    .eq('id', requestId)
+    .select()
+    .single();
+
+  if (error) return { data: null, error: error.message };
+  return {
+    data: normalizeFeatureRequest(data as Record<string, unknown>),
+    error: null,
+  };
+}
+
+export async function deleteFeatureRequestFromSupabase(
+  config: SupabaseConfig,
+  requestId: string
+): Promise<{ error: string | null }> {
+  const client = getSupabaseClient(config);
+  if (!client) return { error: 'Supabase設定が無効です。' };
+
+  const { error } = await client
+    .from('feature_requests')
+    .delete()
+    .eq('id', requestId);
+  if (error) return { error: error.message };
+  return { error: null };
+}
+
+export function subscribeToFeatureRequestsRealtime(
+  config: SupabaseConfig,
+  callbacks: {
+    onInsert: (item: FeatureRequest) => void;
+    onUpdate: (item: FeatureRequest) => void;
+    onDelete: (requestId: string) => void;
+  }
+): () => void {
+  const client = getSupabaseClient(config);
+  if (!client) return () => {};
+
+  const channel = client
+    .channel(`roomline_feature_requests_${Math.random().toString(36).slice(2, 8)}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'feature_requests' },
+      (payload) => {
+        if (payload.new) {
+          callbacks.onInsert(
+            normalizeFeatureRequest(payload.new as Record<string, unknown>)
+          );
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'feature_requests' },
+      (payload) => {
+        if (payload.new) {
+          callbacks.onUpdate(
+            normalizeFeatureRequest(payload.new as Record<string, unknown>)
+          );
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'feature_requests' },
+      (payload) => {
+        const oldRow = payload.old as { id?: string } | null;
+        if (oldRow?.id) {
+          callbacks.onDelete(oldRow.id);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    client.removeChannel(channel);
+  };
 }

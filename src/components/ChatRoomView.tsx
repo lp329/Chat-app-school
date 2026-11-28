@@ -6,15 +6,18 @@ import {
   ChevronLeft,
   Copy,
   Flag,
+  Gamepad2,
   Loader2,
   Lock,
   LogOut,
   Pencil,
+  Phone,
   QrCode,
   Settings,
   ShieldCheck,
   Unlock,
   Users,
+  Video,
   Wifi,
   WifiOff,
   X,
@@ -25,9 +28,13 @@ import {
   formatRoomCode,
   getRoomDisplayTitle,
 } from '../lib/constants';
+import { getMiniGameMeta } from '../lib/minigameData';
+import type { PendingMiniGameInvite } from '../hooks/useMiniGameSession';
 import type {
   ChatMessage,
   CustomSticker,
+  MiniGameId,
+  MiniGameInvitePayload,
   OnlineMember,
   RealtimeStatus,
   ReplyReference,
@@ -79,6 +86,18 @@ interface ChatRoomViewProps {
   onOpenSettings: () => void;
   onOpenProfile: () => void;
   onActivateCamouflage: () => void;
+  onStartAudioCall: () => void;
+  onStartVideoCall: () => void;
+  isCallBusy?: boolean;
+  pendingMiniGameInvite?: PendingMiniGameInvite | null;
+  joiningMiniGameMatchId?: string | null;
+  activeMiniGameMatchId?: string | null;
+  miniGameNotice?: string | null;
+  onDismissMiniGameNotice: () => void;
+  onCancelPendingMiniGame: () => void;
+  onOpenMiniGameLauncher: () => void;
+  onJoinMiniGameInvite: (invite: MiniGameInvitePayload) => void;
+  onRematchMiniGame: (gameId: MiniGameId) => void;
 }
 
 export const ChatRoomView = memo(function ChatRoomView({
@@ -107,6 +126,18 @@ export const ChatRoomView = memo(function ChatRoomView({
   onOpenSettings,
   onOpenProfile,
   onActivateCamouflage,
+  onStartAudioCall,
+  onStartVideoCall,
+  isCallBusy = false,
+  pendingMiniGameInvite = null,
+  joiningMiniGameMatchId = null,
+  activeMiniGameMatchId = null,
+  miniGameNotice = null,
+  onDismissMiniGameNotice,
+  onCancelPendingMiniGame,
+  onOpenMiniGameLauncher,
+  onJoinMiniGameInvite,
+  onRematchMiniGame,
 }: ChatRoomViewProps) {
   const [replyingTo, setReplyingTo] = useState<ReplyReference | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -540,6 +571,30 @@ export const ChatRoomView = memo(function ChatRoomView({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
+          {/* Voice Call Button */}
+          <button
+            type="button"
+            onClick={onStartAudioCall}
+            disabled={isCallBusy}
+            title="音声通話を開始"
+            aria-label="音声通話を開始"
+            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/15 disabled:opacity-40 disabled:pointer-events-none transition-colors shrink-0"
+          >
+            <Phone className="w-4 h-4" />
+          </button>
+
+          {/* Video Call Button */}
+          <button
+            type="button"
+            onClick={onStartVideoCall}
+            disabled={isCallBusy}
+            title="ビデオ通話を開始"
+            aria-label="ビデオ通話を開始"
+            className="min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/15 disabled:opacity-40 disabled:pointer-events-none transition-colors shrink-0"
+          >
+            <Video className="w-4 h-4" />
+          </button>
+
           {/* 4-Digit Passcode Lock Button */}
           <button
             type="button"
@@ -624,6 +679,43 @@ export const ChatRoomView = memo(function ChatRoomView({
         </div>
       )}
 
+      {/* Pending Mini-Game Invite Waiting Strip */}
+      {pendingMiniGameInvite && (
+        <div className="shrink-0 px-4 py-2 bg-emerald-50 dark:bg-emerald-950/60 border-b border-emerald-200 dark:border-emerald-800/70 text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Gamepad2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="truncate font-semibold">
+              {getMiniGameMeta(pendingMiniGameInvite.gameId).shortTitle}の対戦相手を募集中...
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelPendingMiniGame}
+            className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
+          >
+            募集を閉じる
+          </button>
+        </div>
+      )}
+
+      {/* Mini-Game Status Notice */}
+      {miniGameNotice && (
+        <div className="shrink-0 px-4 py-2 bg-amber-50 dark:bg-amber-950/60 border-b border-amber-200 dark:border-amber-800/70 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Gamepad2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="truncate font-medium">{miniGameNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onDismissMiniGameNotice}
+            aria-label="通知を閉じる"
+            className="shrink-0 p-1 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Memoized Message Stream Area (Never re-renders on inputText or onlineMembers typing changes) */}
       <ChatMessageList
         roomCode={roomCode}
@@ -641,6 +733,10 @@ export const ChatRoomView = memo(function ChatRoomView({
         onOpenReportModal={onOpenReportModal}
         onOpenLightbox={setLightboxImage}
         onOpenQrModal={handleOpenQrModal}
+        onJoinMiniGameInvite={onJoinMiniGameInvite}
+        onRematchMiniGame={onRematchMiniGame}
+        activeMiniGameMatchId={activeMiniGameMatchId}
+        joiningMiniGameMatchId={joiningMiniGameMatchId}
       />
 
       {/* Real-time Typing Indicator Bar (just above input footer) */}
@@ -677,6 +773,7 @@ export const ChatRoomView = memo(function ChatRoomView({
         customStickers={customStickers}
         replyingTo={replyingTo}
         onClearReply={handleClearReply}
+        onOpenMiniGameLauncher={onOpenMiniGameLauncher}
         onSendMessage={onSendMessage}
         onSendSticker={onSendSticker}
         onTypingChange={onTypingChange}

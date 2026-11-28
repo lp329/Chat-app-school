@@ -1,8 +1,29 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, Loader2, MessageCircle, QrCode } from 'lucide-react';
-import { formatDateDivider } from '../lib/constants';
+import {
+  ArrowDown,
+  Circle,
+  Gamepad2,
+  Loader2,
+  MessageCircle,
+  Palette,
+  QrCode,
+  RotateCcw,
+  Trophy,
+  Zap,
+} from 'lucide-react';
+import { formatDateDivider, formatTimeHHMM } from '../lib/constants';
+import {
+  getMiniGameCardPreviewText,
+  getMiniGameMeta,
+  parseMiniGameCardContent,
+} from '../lib/minigameData';
 import { getStickerPreviewLabel } from '../lib/stickers';
-import type { ChatMessage, ReplyReference } from '../types/chat';
+import type {
+  ChatMessage,
+  MiniGameId,
+  MiniGameInvitePayload,
+  ReplyReference,
+} from '../types/chat';
 import { ChatMessageBubble } from './ChatMessageBubble';
 import type { LightboxImageData } from './ImageLightbox';
 
@@ -22,10 +43,16 @@ interface ChatMessageListProps {
   onOpenReportModal: (targetUser: string) => void;
   onOpenLightbox: (data: LightboxImageData) => void;
   onOpenQrModal: () => void;
+  onJoinMiniGameInvite: (invite: MiniGameInvitePayload) => void;
+  onRematchMiniGame: (gameId: MiniGameId) => void;
+  activeMiniGameMatchId?: string | null;
+  joiningMiniGameMatchId?: string | null;
 }
 
 function getReplyExcerptForMessage(msg: ChatMessage): string {
   if (msg.sticker_url) return getStickerPreviewLabel(msg.sticker_url);
+  const gamePreview = getMiniGameCardPreviewText(msg.content || '');
+  if (gamePreview) return gamePreview;
   const trimmed = (msg.content || '').trim();
   if (trimmed && msg.image_url) return `[画像] ${trimmed}`;
   if (msg.image_url) return '[画像]';
@@ -48,6 +75,10 @@ export const ChatMessageList = memo(function ChatMessageList({
   onOpenReportModal,
   onOpenLightbox,
   onOpenQrModal,
+  onJoinMiniGameInvite,
+  onRematchMiniGame,
+  activeMiniGameMatchId = null,
+  joiningMiniGameMatchId = null,
 }: ChatMessageListProps) {
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -259,6 +290,157 @@ export const ChatMessageList = memo(function ChatMessageList({
             const prevDateLabel = prevMsg ? formatDateDivider(prevMsg.created_at) : null;
             const dateDividerLabel =
               currentDateLabel !== prevDateLabel ? currentDateLabel : null;
+
+            const gameCard =
+              !msg.decryption_failed && !msg.sticker_url && !msg.image_url
+                ? parseMiniGameCardContent(msg.content)
+                : null;
+
+            if (gameCard?.kind === 'invite') {
+              const invite = gameCard.data;
+              const meta = getMiniGameMeta(invite.gameId);
+              const isHostSelf = invite.host.userId === profileId;
+              const isJoining = joiningMiniGameMatchId === invite.matchId;
+              const isActive = activeMiniGameMatchId === invite.matchId;
+
+              return (
+                <div key={msg.id} className="space-y-3">
+                  {dateDividerLabel && (
+                    <div className="flex justify-center">
+                      <span className="px-3 py-1 rounded-full bg-white/85 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/70 text-[11px] font-medium text-slate-600 dark:text-slate-300 shadow-2xs">
+                        {dateDividerLabel}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-center">
+                    <div className="w-full max-w-sm rounded-2xl border border-emerald-200/90 dark:border-emerald-500/30 bg-white/95 dark:bg-slate-900/95 p-4 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${meta.accentClass}`}
+                        >
+                          {invite.gameId === 'reaction' ? (
+                            <Zap className="w-5 h-5" />
+                          ) : invite.gameId === 'draw_guess' ? (
+                            <Palette className="w-5 h-5" />
+                          ) : (
+                            <Circle className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                              <Gamepad2 className="w-3.5 h-3.5" />
+                              ミニゲーム対戦募集
+                            </span>
+                            <span className="text-[10px] text-slate-400 tabular-nums">
+                              {formatTimeHHMM(msg.created_at)}
+                            </span>
+                          </div>
+                          <h4 className="mt-0.5 text-sm font-extrabold text-slate-900 dark:text-white">
+                            {meta.title}
+                          </h4>
+                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                            {invite.host.nickname}さんが対戦相手を募集しています！
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                        <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                          {meta.badge}
+                        </span>
+                        {isActive ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                            対戦中
+                          </span>
+                        ) : isHostSelf ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
+                            対戦相手を待っています...
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onJoinMiniGameInvite(invite);
+                            }}
+                            disabled={Boolean(joiningMiniGameMatchId) || Boolean(activeMiniGameMatchId)}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+                          >
+                            {isJoining ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                接続中...
+                              </>
+                            ) : (
+                              '参加して対戦する！'
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            if (gameCard?.kind === 'result') {
+              const result = gameCard.data;
+              const meta = getMiniGameMeta(result.gameId);
+
+              return (
+                <div key={msg.id} className="space-y-3">
+                  {dateDividerLabel && (
+                    <div className="flex justify-center">
+                      <span className="px-3 py-1 rounded-full bg-white/85 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/70 text-[11px] font-medium text-slate-600 dark:text-slate-300 shadow-2xs">
+                        {dateDividerLabel}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-center">
+                    <div className="w-full max-w-md rounded-2xl border border-amber-200/90 dark:border-amber-500/30 bg-gradient-to-br from-amber-50/95 via-white to-white dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/90 px-4 py-3.5 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-400/20 text-amber-600 dark:text-amber-300">
+                          <Trophy className="w-4.5 h-4.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                              {meta.shortTitle} · 対戦結果
+                            </span>
+                            <span className="text-[10px] text-slate-400 tabular-nums">
+                              {formatTimeHHMM(msg.created_at)}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs sm:text-sm font-extrabold text-slate-900 dark:text-white leading-snug">
+                            {result.headline}
+                          </p>
+                          {result.detail && (
+                            <p className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                              {result.detail}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRematchMiniGame(result.gameId);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          もう1回！
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <ChatMessageBubble

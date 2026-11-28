@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AccountTransferModal } from './components/AccountTransferModal';
 import { AdminPortal } from './components/AdminPortal';
 import { BoomFeedView } from './components/BoomFeedView';
+import { CallOverlay } from './components/CallOverlay';
 import { CamouflageCalculator } from './components/CamouflageCalculator';
 import { ChatRoomView } from './components/ChatRoomView';
 import { CreateRoomModal } from './components/CreateRoomModal';
+import { FeatureRequestModal } from './components/FeatureRequestModal';
 import { JoinRoomModal } from './components/JoinRoomModal';
 import { LeaveRoomModal } from './components/LeaveRoomModal';
 import { MaintenanceOverlay } from './components/MaintenanceOverlay';
+import { MiniGameLauncherModal } from './components/MiniGameLauncherModal';
+import { MiniGameOverlay } from './components/MiniGameOverlay';
 import { NotificationBanner } from './components/NotificationBanner';
 import { OfficialChatView } from './components/OfficialChatView';
 import { PasscodeModal } from './components/PasscodeModal';
@@ -15,10 +20,13 @@ import { ReportModal } from './components/ReportModal';
 import { Sidebar } from './components/Sidebar';
 import { TalkListEmptyOrMobile } from './components/TalkListEmptyOrMobile';
 import { WelcomeOnboarding } from './components/WelcomeOnboarding';
+import { useMiniGameSession } from './hooks/useMiniGameSession';
+import { useWebRtcCall } from './hooks/useWebRtcCall';
 import {
   OFFICIAL_ROOM_ID,
   formatRoomCode,
   generateGuestName,
+  getRoomDisplayTitle,
 } from './lib/constants';
 import {
   clearDecryptedMessageCache,
@@ -32,11 +40,13 @@ import {
   isEncryptedPayload,
   resolveRawRoomCodeFromHash,
 } from './lib/crypto';
+import { getMiniGameCardPreviewText } from './lib/minigameData';
 import { getStickerPreviewLabel } from './lib/stickers';
 import {
   addMockBoomComment,
   appendMockMessage,
   createMockBoomPost,
+  createMockFeatureRequest,
   createMockReport,
   deleteMockBoomPost,
   deleteMockMessage,
@@ -46,6 +56,7 @@ import {
   loadCustomStickers,
   loadMockAnnouncements,
   loadMockBoomPosts,
+  loadMockFeatureRequests,
   loadMockMaintenanceMode,
   loadMockMessages,
   loadMockRoomsMeta,
@@ -64,15 +75,18 @@ import {
   subscribeToAllMockEvents,
   subscribeToMockPresence,
   updateMockBoomPost,
+  updateMockFeatureRequest,
   updateMockMessageReactions,
   updateMockMessageReadBy,
 } from './lib/storage';
 import {
   createBoomPostInSupabase,
+  createFeatureRequestInSupabase,
   createReportInSupabase,
   deleteBoomPostFromSupabase,
   deleteRoomMessageFromSupabase,
   fetchBoomPostsFromSupabase,
+  fetchFeatureRequestsFromSupabase,
   fetchMaintenanceModeFromSupabase,
   fetchOfficialAnnouncementsFromSupabase,
   fetchRoomMessagesFromSupabase,
@@ -82,6 +96,7 @@ import {
   normalizeReactionsMap,
   sendRoomMessageToSupabase,
   subscribeToBoomPostsRealtime,
+  subscribeToFeatureRequestsRealtime,
   subscribeToGlobalMessageDeletes,
   subscribeToMaintenanceModeRealtime,
   subscribeToOfficialAnnouncementsRealtime,
@@ -89,6 +104,7 @@ import {
   subscribeToSupabaseRoom,
   updateBoomPostCommentsInSupabase,
   updateBoomPostLikesInSupabase,
+  updateFeatureRequestVotesInSupabase,
   updateMessageReactionsInSupabase,
   uploadChatImageToSupabase,
   uploadStorageImageToSupabase,
@@ -97,11 +113,13 @@ import {
   type RawDbMessage,
 } from './lib/supabaseService';
 import type {
+  AccountTransferPayload,
   ActiveTab,
   BoomComment,
   BoomPost,
   ChatMessage,
   CustomSticker,
+  FeatureRequest,
   OfficialAnnouncement,
   OnlineMember,
   ReactionMap,
@@ -126,6 +144,8 @@ function isOwnMessage(msg: ChatMessage, profile: UserProfile): boolean {
 function getMessagePreviewText(msg: ChatMessage): string {
   if (msg.sticker_url) return getStickerPreviewLabel(msg.sticker_url);
   if (msg.decryption_failed) return '🔒 暗号化されたメッセージ';
+  const gamePreview = getMiniGameCardPreviewText(msg.content || '');
+  if (gamePreview) return gamePreview;
   const trimmed = (msg.content || '').trim();
   if (trimmed && msg.image_url) return `[画像] ${trimmed}`;
   if (msg.image_url) return '画像を送信しました';
@@ -211,6 +231,20 @@ export default function App() {
     loadOfficialLastReadAt()
   );
   const [isMaintenanceMode, setIsMaintenanceMode] = useState<boolean>(false);
+
+  // Feature Requests & Voting Box state
+  const [featureRequests, setFeatureRequests] = useState<FeatureRequest[]>([]);
+  const [loadingFeatureRequests, setLoadingFeatureRequests] = useState(false);
+  const [featureRequestsError, setFeatureRequestsError] = useState<string | null>(null);
+  const [isFeatureRequestModalOpen, setIsFeatureRequestModalOpen] = useState(false);
+
+  // Account Transfer Modal & Restore Revision state
+  const [accountTransferModalState, setAccountTransferModalState] = useState<{
+    open: boolean;
+    tab: 'export' | 'import';
+    importOnly?: boolean;
+  }>({ open: false, tab: 'export' });
+  const [restoreRevision, setRestoreRevision] = useState(0);
 
   // Modals, Passcode Gate, Report Modal, Notification Banner & Camouflage Mode
   const [notification, setNotification] = useState<RoomNotification | null>(null);
@@ -597,6 +631,26 @@ export default function App() {
     setBoomPosts((prev) => prev.filter((p) => p.id !== postId));
   }, []);
 
+  // --- Feature Requests Realtime Handlers ---
+
+  const handleFeatureRequestInsert = useCallback((item: FeatureRequest) => {
+    setFeatureRequests((prev) => {
+      if (prev.some((r) => r.id === item.id)) return prev;
+      return [item, ...prev];
+    });
+  }, []);
+
+  const handleFeatureRequestUpdate = useCallback((item: FeatureRequest) => {
+    setFeatureRequests((prev) => {
+      if (!prev.some((r) => r.id === item.id)) return [item, ...prev];
+      return prev.map((r) => (r.id === item.id ? item : r));
+    });
+  }, []);
+
+  const handleFeatureRequestDelete = useCallback((requestId: string) => {
+    setFeatureRequests((prev) => prev.filter((r) => r.id !== requestId));
+  }, []);
+
   // --- Official ROOMLINE Announcements & Maintenance Mode Realtime Handlers ---
 
   const markOfficialAsRead = useCallback((referenceIso?: string) => {
@@ -779,6 +833,56 @@ export default function App() {
     handleBoomDelete,
   ]);
 
+  // Load & subscribe Feature Requests (Supabase Realtime or Local Mock)
+  useEffect(() => {
+    if (isAdminRoute) return;
+    let active = true;
+    setFeatureRequestsError(null);
+
+    if (!isSupabaseConfigured) {
+      setLoadingFeatureRequests(false);
+      setFeatureRequests(loadMockFeatureRequests());
+      return;
+    }
+
+    setLoadingFeatureRequests(true);
+    void fetchFeatureRequestsFromSupabase(supabaseState.config).then(
+      ({ data, error }) => {
+        if (!active) return;
+        setLoadingFeatureRequests(false);
+        if (error) {
+          setFeatureRequestsError(`改善要望の取得に失敗しました: ${error}`);
+        } else {
+          setFeatureRequests(data);
+        }
+      }
+    );
+
+    const unsub = subscribeToFeatureRequestsRealtime(supabaseState.config, {
+      onInsert: (item) => {
+        if (active) handleFeatureRequestInsert(item);
+      },
+      onUpdate: (item) => {
+        if (active) handleFeatureRequestUpdate(item);
+      },
+      onDelete: (requestId) => {
+        if (active) handleFeatureRequestDelete(requestId);
+      },
+    });
+
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [
+    isAdminRoute,
+    isSupabaseConfigured,
+    supabaseState.config,
+    handleFeatureRequestInsert,
+    handleFeatureRequestUpdate,
+    handleFeatureRequestDelete,
+  ]);
+
   // --- Tracked Chat Rooms Hydration & Subscriptions (Hashed Room IDs + E2EE Decryption) ---
 
   const trackedRoomCodes = useMemo(() => {
@@ -808,7 +912,12 @@ export default function App() {
     setLoadingRooms({});
     setRoomErrors({});
     setRoomStatuses({});
-  }, [isSupabaseConfigured, supabaseState.config.url, supabaseState.config.anonKey]);
+  }, [
+    isSupabaseConfigured,
+    supabaseState.config.url,
+    supabaseState.config.anonKey,
+    restoreRevision,
+  ]);
 
   useEffect(() => {
     if (isAdminRoute) return;
@@ -1000,6 +1109,7 @@ export default function App() {
   }, [
     isAdminRoute,
     trackedKey,
+    restoreRevision,
     isSupabaseConfigured,
     supabaseState.config,
     decryptRawDbMessage,
@@ -1043,6 +1153,9 @@ export default function App() {
       onBoomDelete: handleBoomDelete,
       onAnnouncementInsert: handleIncomingOfficialAnnouncement,
       onAnnouncementDelete: handleDeleteOfficialAnnouncement,
+      onFeatureRequestInsert: handleFeatureRequestInsert,
+      onFeatureRequestUpdate: handleFeatureRequestUpdate,
+      onFeatureRequestDelete: handleFeatureRequestDelete,
       onMaintenanceUpdate: setIsMaintenanceMode,
     });
     return unsub;
@@ -1059,6 +1172,9 @@ export default function App() {
     handleBoomDelete,
     handleIncomingOfficialAnnouncement,
     handleDeleteOfficialAnnouncement,
+    handleFeatureRequestInsert,
+    handleFeatureRequestUpdate,
+    handleFeatureRequestDelete,
   ]);
 
   // Active Room Presence (Uses SHA-256 Hashed Room ID + supports isTyping)
@@ -1992,6 +2108,161 @@ export default function App() {
     [isSupabaseConfigured, supabaseState.config]
   );
 
+  // --- Feature Requests & Voting Actions ---
+
+  const handleCreateFeatureRequest = useCallback(
+    async (payload: {
+      title: string;
+      description: string;
+      anonymous: boolean;
+    }): Promise<string | null> => {
+      if (isMaintenanceModeRef.current) {
+        return '現在ROOMLINEはシステムメンテナンス中のため投稿できません。';
+      }
+      const authorName = payload.anonymous
+        ? '匿名'
+        : profileRef.current.nickname.trim() || 'ゲスト';
+
+      if (!isSupabaseConfigured) {
+        const created: FeatureRequest = {
+          id:
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `feat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          title: payload.title,
+          description: payload.description,
+          author_name: authorName,
+          votes: 0,
+          voted_user_ids: [],
+          status: '検討中',
+          created_at: new Date().toISOString(),
+        };
+        createMockFeatureRequest(created);
+        handleFeatureRequestInsert(created);
+        return null;
+      }
+
+      const { data, error } = await createFeatureRequestInSupabase(
+        supabaseState.config,
+        {
+          title: payload.title,
+          description: payload.description,
+          author_name: authorName,
+        }
+      );
+      if (error) return `要望の投稿に失敗しました: ${error}`;
+      if (data) handleFeatureRequestInsert(data);
+      return null;
+    },
+    [isSupabaseConfigured, supabaseState.config, handleFeatureRequestInsert]
+  );
+
+  const handleToggleFeatureRequestVote = useCallback(
+    async (request: FeatureRequest): Promise<string | null> => {
+      if (isMaintenanceModeRef.current) {
+        return '現在ROOMLINEはシステムメンテナンス中のため投票できません。';
+      }
+      const userId = profileRef.current.id;
+      const alreadyVoted = request.voted_user_ids.includes(userId);
+      const nextVotedIds = alreadyVoted
+        ? request.voted_user_ids.filter((id) => id !== userId)
+        : Array.from(new Set([...request.voted_user_ids, userId]));
+
+      const optimistic: FeatureRequest = {
+        ...request,
+        voted_user_ids: nextVotedIds,
+        votes: nextVotedIds.length,
+      };
+      handleFeatureRequestUpdate(optimistic);
+
+      if (!isSupabaseConfigured) {
+        updateMockFeatureRequest(request.id, () => optimistic);
+        return null;
+      }
+
+      const { data, error } = await updateFeatureRequestVotesInSupabase(
+        supabaseState.config,
+        request.id,
+        nextVotedIds
+      );
+      if (error) {
+        handleFeatureRequestUpdate(request);
+        return `投票の更新に失敗しました: ${error}`;
+      }
+      if (data) handleFeatureRequestUpdate(data);
+      return null;
+    },
+    [isSupabaseConfigured, supabaseState.config, handleFeatureRequestUpdate]
+  );
+
+  // --- Account Transfer Export & Restore Actions ---
+
+  const getRoomPasscodes = useCallback((): Record<string, string> => {
+    const out: Record<string, string> = {};
+    roomPasscodeSecretsRef.current.forEach((pass, code) => {
+      out[code] = pass;
+    });
+    return out;
+  }, []);
+
+  const handleRestoreAccount = useCallback(
+    (payload: AccountTransferPayload) => {
+      const sortedRooms = sortRecentRoomsDesc(payload.recentRooms);
+
+      // Persist all restored state to localStorage
+      saveUserProfile(payload.profile);
+      saveRecentRooms(sortedRooms);
+      saveCustomStickers(payload.customStickers);
+      saveThemeMode(payload.themeMode);
+      if (payload.officialLastReadAt) {
+        saveOfficialLastReadAt(payload.officialLastReadAt);
+      }
+      markOnboardingCompleted();
+
+      // Hydrate in-memory E2EE passcodes & unlocked room state
+      roomPasscodeSecretsRef.current.clear();
+      unlockedRoomsRef.current.clear();
+      Object.entries(payload.roomPasscodes).forEach(([code, pass]) => {
+        roomPasscodeSecretsRef.current.set(code, pass);
+        unlockedRoomsRef.current.add(code);
+      });
+
+      // Update React state
+      setProfile(payload.profile);
+      setRecentRooms(sortedRooms);
+      setCustomStickers(payload.customStickers);
+      setThemeMode(payload.themeMode);
+      setOfficialLastReadAt(payload.officialLastReadAt);
+      setOnboardingDone(true);
+      setActiveTab('rooms');
+
+      const firstAccessible = sortedRooms.find(
+        (r) =>
+          !(r.passcode && r.passcode.trim()) ||
+          Boolean(payload.roomPasscodes[r.roomCode])
+      );
+      setActiveRoomCode(
+        firstAccessible ? firstAccessible.roomCode : OFFICIAL_ROOM_ID
+      );
+
+      // Force clean room subscription & decryption cache refresh
+      setRestoreRevision((v) => v + 1);
+      setIsProfileModalOpen(false);
+      setAccountTransferModalState({ open: false, tab: 'export' });
+
+      showNotificationBanner({
+        id: `restore_${Date.now()}`,
+        roomCode: firstAccessible ? firstAccessible.roomCode : OFFICIAL_ROOM_ID,
+        roomTitle: 'アカウント引き継ぎ完了',
+        senderName: payload.profile.nickname || 'ゲスト',
+        content: `プロフィールとトーク履歴（${sortedRooms.length}件）を復元しました`,
+        createdAt: new Date().toISOString(),
+        isOfficial: true,
+      });
+    },
+    [showNotificationBanner]
+  );
+
   const suggestedReportTargets = useMemo(() => {
     const selfName = profile.nickname.trim() || 'ゲスト';
     const names = new Set<string>();
@@ -2037,6 +2308,24 @@ export default function App() {
   const handleCloseJoinRoom = useCallback(() => setIsJoinRoomOpen(false), []);
   const handleOpenProfileModal = useCallback(() => setIsProfileModalOpen(true), []);
   const handleCloseProfileModal = useCallback(() => setIsProfileModalOpen(false), []);
+  const handleOpenFeatureRequests = useCallback(() => {
+    setIsProfileModalOpen(false);
+    setIsFeatureRequestModalOpen(true);
+  }, []);
+  const handleCloseFeatureRequests = useCallback(
+    () => setIsFeatureRequestModalOpen(false),
+    []
+  );
+  const handleOpenAccountTransfer = useCallback((tab: 'export' | 'import') => {
+    setIsProfileModalOpen(false);
+    setAccountTransferModalState({ open: true, tab, importOnly: false });
+  }, []);
+  const handleOpenOnboardingRestore = useCallback(() => {
+    setAccountTransferModalState({ open: true, tab: 'import', importOnly: true });
+  }, []);
+  const handleCloseAccountTransfer = useCallback(() => {
+    setAccountTransferModalState((prev) => ({ ...prev, open: false }));
+  }, []);
   const handleOpenPasscodeManage = useCallback(() => setIsPasscodeManageOpen(true), []);
   const handleClosePasscodeManage = useCallback(() => setIsPasscodeManageOpen(false), []);
   const handleActivateCamouflage = useCallback(() => setIsCamouflaged(true), []);
@@ -2052,6 +2341,51 @@ export default function App() {
     setReportModalState({ open: false, targetUser: '' });
   }, []);
   const handleDismissNotification = useCallback(() => setNotification(null), []);
+
+  // WebRTC Voice & Video Call controller (scoped to active room, auto-terminated on Camouflage or Maintenance)
+  const callController = useWebRtcCall({
+    activeRoomCode: activeTab === 'rooms' ? activeRoomCode : null,
+    profile,
+    supabaseConfig: supabaseState.config,
+    isSupabaseConfigured,
+    isDisabled: isAdminRoute || !onboardingDone,
+    isStealthOrMaintenance: isCamouflaged || isMaintenanceMode,
+  });
+
+  const { startCall: startWebRtcCall } = callController;
+
+  const handleStartAudioCall = useCallback(() => {
+    void startWebRtcCall('audio');
+  }, [startWebRtcCall]);
+
+  const handleStartVideoCall = useCallback(() => {
+    void startWebRtcCall('video');
+  }, [startWebRtcCall]);
+
+  // Online Mini-Games session controller (Supabase Realtime Broadcast `minigame-sync`, auto-closed on Camouflage or Maintenance)
+  const handleSendMiniGameRoomText = useCallback(
+    async (roomCode: string, text: string) => {
+      await handleSendMessage(roomCode, text, null, null);
+    },
+    [handleSendMessage]
+  );
+
+  const miniGameSession = useMiniGameSession({
+    activeRoomCode: activeTab === 'rooms' ? activeRoomCode : null,
+    profile,
+    supabaseConfig: supabaseState.config,
+    isSupabaseConfigured,
+    isDisabled: isAdminRoute || !onboardingDone,
+    isStealthOrMaintenance: isCamouflaged || isMaintenanceMode,
+    onSendRoomText: handleSendMiniGameRoomText,
+  });
+
+  const handleRematchMiniGameFromCard = useCallback(
+    (gameId: 'reaction' | 'draw_guess' | 'reversi') => {
+      void miniGameSession.createInvite(gameId);
+    },
+    [miniGameSession]
+  );
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', themeMode === 'dark');
@@ -2081,7 +2415,23 @@ export default function App() {
         <WelcomeOnboarding
           initialProfile={profile}
           onComplete={handleCompleteOnboarding}
+          onOpenRestoreModal={handleOpenOnboardingRestore}
         />
+        {accountTransferModalState.open && (
+          <AccountTransferModal
+            isOpen={accountTransferModalState.open}
+            initialTab="import"
+            importOnly
+            profile={profile}
+            recentRooms={recentRooms}
+            customStickers={customStickers}
+            themeMode={themeMode}
+            officialLastReadAt={officialLastReadAt}
+            getRoomPasscodes={getRoomPasscodes}
+            onRestoreAccount={handleRestoreAccount}
+            onClose={handleCloseAccountTransfer}
+          />
+        )}
         {isMaintenanceMode && <MaintenanceOverlay />}
       </>
     );
@@ -2116,6 +2466,7 @@ export default function App() {
         onOpenJoinRoom={handleOpenJoinRoom}
         onOpenProfileModal={handleOpenProfileModal}
         onOpenSettings={handleOpenProfileModal}
+        onOpenFeatureRequests={handleOpenFeatureRequests}
         onActivateCamouflage={handleActivateCamouflage}
       />
 
@@ -2173,6 +2524,18 @@ export default function App() {
             onOpenSettings={handleOpenProfileModal}
             onOpenProfile={handleOpenProfileModal}
             onActivateCamouflage={handleActivateCamouflage}
+            onStartAudioCall={handleStartAudioCall}
+            onStartVideoCall={handleStartVideoCall}
+            isCallBusy={callController.status !== 'idle'}
+            pendingMiniGameInvite={miniGameSession.pendingInvite}
+            joiningMiniGameMatchId={miniGameSession.joiningMatchId}
+            activeMiniGameMatchId={miniGameSession.activeMatch?.matchId ?? null}
+            miniGameNotice={miniGameSession.miniGameNotice}
+            onDismissMiniGameNotice={miniGameSession.dismissNotice}
+            onCancelPendingMiniGame={miniGameSession.cancelPendingInvite}
+            onOpenMiniGameLauncher={miniGameSession.openLauncher}
+            onJoinMiniGameInvite={miniGameSession.joinInvite}
+            onRematchMiniGame={handleRematchMiniGameFromCard}
           />
         ) : (
           <TalkListEmptyOrMobile
@@ -2189,6 +2552,7 @@ export default function App() {
             onOpenJoinRoom={handleOpenJoinRoom}
             onOpenProfileModal={handleOpenProfileModal}
             onOpenSettings={handleOpenProfileModal}
+            onOpenFeatureRequests={handleOpenFeatureRequests}
             onActivateCamouflage={handleActivateCamouflage}
           />
         )}
@@ -2254,7 +2618,40 @@ export default function App() {
           themeMode={themeMode}
           onUpdateProfile={handleUpdateProfile}
           onChangeThemeMode={handleChangeThemeMode}
+          onOpenAccountTransfer={handleOpenAccountTransfer}
+          onOpenFeatureRequests={handleOpenFeatureRequests}
           onClose={handleCloseProfileModal}
+        />
+      )}
+
+      {/* Feature Request & Voting Box Modal (mounted only when open) */}
+      {isFeatureRequestModalOpen && (
+        <FeatureRequestModal
+          isOpen={isFeatureRequestModalOpen}
+          requests={featureRequests}
+          loading={loadingFeatureRequests}
+          errorMsg={featureRequestsError}
+          profile={profile}
+          onCreateRequest={handleCreateFeatureRequest}
+          onToggleVote={handleToggleFeatureRequestVote}
+          onClose={handleCloseFeatureRequests}
+        />
+      )}
+
+      {/* Encrypted Account Transfer (Backup & Restore) Modal (mounted only when open) */}
+      {accountTransferModalState.open && (
+        <AccountTransferModal
+          isOpen={accountTransferModalState.open}
+          initialTab={accountTransferModalState.tab}
+          importOnly={accountTransferModalState.importOnly}
+          profile={profile}
+          recentRooms={recentRooms}
+          customStickers={customStickers}
+          themeMode={themeMode}
+          officialLastReadAt={officialLastReadAt}
+          getRoomPasscodes={getRoomPasscodes}
+          onRestoreAccount={handleRestoreAccount}
+          onClose={handleCloseAccountTransfer}
         />
       )}
 
@@ -2317,6 +2714,47 @@ export default function App() {
 
       {/* Emergency Maintenance Mode Overlay (blocks general users; never shown on /admin) */}
       {isMaintenanceMode && !isCamouflaged && <MaintenanceOverlay />}
+
+      {/* WebRTC Voice & Video Call Overlay (auto-hidden & terminated on Camouflage or Maintenance) */}
+      {!isCamouflaged &&
+        !isMaintenanceMode &&
+        (callController.status !== 'idle' || Boolean(callController.callNotice)) && (
+          <CallOverlay
+            call={callController}
+            roomDisplayTitle={
+              activeRoomCode && !isViewingOfficialRoom
+                ? getRoomDisplayTitle(activeRoomCode, activeRoomMeta?.title)
+                : 'トークルーム'
+            }
+            onActivateCamouflage={handleActivateCamouflage}
+          />
+        )}
+
+      {/* Online Mini-Games Launcher Modal & Active Game Overlay (auto-hidden & terminated on Camouflage or Maintenance) */}
+      {!isCamouflaged && !isMaintenanceMode && miniGameSession.isLauncherOpen && (
+        <MiniGameLauncherModal
+          isOpen={miniGameSession.isLauncherOpen}
+          onClose={miniGameSession.closeLauncher}
+          onSelectGame={(gameId) => {
+            void miniGameSession.createInvite(gameId);
+          }}
+        />
+      )}
+
+      {!isCamouflaged && !isMaintenanceMode && miniGameSession.activeMatch && (
+        <MiniGameOverlay
+          match={miniGameSession.activeMatch}
+          selfPlayer={miniGameSession.selfPlayer}
+          rematchPendingFromSelf={miniGameSession.rematchPendingFromSelf}
+          rematchRequestedByOpponent={miniGameSession.rematchRequestedByOpponent}
+          registerEventListener={miniGameSession.registerEventListener}
+          sendEvent={miniGameSession.sendEvent}
+          onReportMatchResult={miniGameSession.reportMatchResult}
+          onRequestRematch={miniGameSession.requestRematch}
+          onLeaveMatch={() => miniGameSession.leaveActiveMatch(true)}
+          onTriggerCamouflage={handleActivateCamouflage}
+        />
+      )}
 
       {/* One-tap Boss Key Camouflage Calculator screen */}
       {isCamouflaged && <CamouflageCalculator onExit={handleExitCamouflage} />}

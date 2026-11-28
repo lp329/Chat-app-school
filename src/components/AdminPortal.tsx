@@ -12,6 +12,7 @@ import {
   EyeOff,
   Flag,
   KeyRound,
+  Lightbulb,
   Loader2,
   Lock,
   LogOut,
@@ -24,6 +25,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sun,
+  ThumbsUp,
   Trash2,
   Wrench,
 } from 'lucide-react';
@@ -37,33 +39,42 @@ import {
 import {
   createMockAnnouncement,
   deleteMockAnnouncement,
+  deleteMockFeatureRequest,
   deleteMockReport,
   loadMockAdminStats,
   loadMockAnnouncements,
+  loadMockFeatureRequests,
   loadMockMaintenanceMode,
   loadMockReports,
   purgeOldMockMessages,
   saveMockMaintenanceMode,
   subscribeToAllMockEvents,
+  updateMockFeatureRequest,
   updateMockReportStatus,
 } from '../lib/storage';
 import {
   createOfficialAnnouncementInSupabase,
+  deleteFeatureRequestFromSupabase,
   deleteOfficialAnnouncementFromSupabase,
   deleteReportFromSupabase,
   fetchAdminStatsFromSupabase,
+  fetchFeatureRequestsFromSupabase,
   fetchMaintenanceModeFromSupabase,
   fetchOfficialAnnouncementsFromSupabase,
   fetchReportsFromSupabase,
   purgeOldMessagesFromSupabase,
   setMaintenanceModeInSupabase,
+  subscribeToFeatureRequestsRealtime,
   subscribeToMaintenanceModeRealtime,
   subscribeToOfficialAnnouncementsRealtime,
   subscribeToReportsRealtime,
+  updateFeatureRequestStatusInSupabase,
   updateReportStatusInSupabase,
 } from '../lib/supabaseService';
 import type {
   AdminSystemStats,
+  FeatureRequest,
+  FeatureRequestStatus,
   OfficialAnnouncement,
   ReportStatus,
   SupabaseConfig,
@@ -79,7 +90,11 @@ interface AdminPortalProps {
   onExitToLobby: () => void;
 }
 
-type AdminConsoleTab = 'announcements' | 'reports' | 'maintenance';
+type AdminConsoleTab =
+  | 'announcements'
+  | 'reports'
+  | 'feature_requests'
+  | 'maintenance';
 
 function formatDateTimeJP(isoString: string): string {
   const date = new Date(isoString);
@@ -112,6 +127,27 @@ const REPORT_STATUS_META: Record<
   },
 };
 
+const FEATURE_STATUS_META: Record<
+  FeatureRequestStatus,
+  { label: string; badgeClass: string }
+> = {
+  検討中: {
+    label: '検討中',
+    badgeClass:
+      'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/40',
+  },
+  開発中: {
+    label: '開発中',
+    badgeClass:
+      'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-500/40',
+  },
+  実装済み: {
+    label: '実装済み',
+    badgeClass:
+      'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/40',
+  },
+};
+
 export function AdminPortal({
   supabaseConfig,
   isSupabaseConfigured,
@@ -139,6 +175,7 @@ export function AdminPortal({
     useState<AdminConsoleTab>('announcements');
   const [announcements, setAnnouncements] = useState<OfficialAnnouncement[]>([]);
   const [reports, setReports] = useState<UserReport[]>([]);
+  const [featureRequests, setFeatureRequests] = useState<FeatureRequest[]>([]);
   const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
   const [stats, setStats] = useState<AdminSystemStats>({
     totalMessages: 0,
@@ -159,6 +196,11 @@ export function AdminPortal({
   // Reports filter & delete confirm
   const [reportFilter, setReportFilter] = useState<'all' | ReportStatus>('all');
   const [confirmDeleteReportId, setConfirmDeleteReportId] = useState<string | null>(null);
+
+  // Feature Requests filter, sort & delete confirm
+  const [featureFilter, setFeatureFilter] = useState<'all' | FeatureRequestStatus>('all');
+  const [featureSort, setFeatureSort] = useState<'popular' | 'newest'>('popular');
+  const [confirmDeleteFeatureId, setConfirmDeleteFeatureId] = useState<string | null>(null);
 
   // Maintenance & Purge state
   const [togglingMaintenance, setTogglingMaintenance] = useState(false);
@@ -183,28 +225,31 @@ export function AdminPortal({
       if (!isSupabaseConfigured) {
         setAnnouncements(loadMockAnnouncements());
         setReports(loadMockReports());
+        setFeatureRequests(loadMockFeatureRequests());
         setMaintenanceMode(loadMockMaintenanceMode());
         setStats(loadMockAdminStats());
         return;
       }
 
-      const [annRes, repRes, maintRes, statsRes] = await Promise.all([
+      const [annRes, repRes, featRes, maintRes, statsRes] = await Promise.all([
         fetchOfficialAnnouncementsFromSupabase(supabaseConfig),
         fetchReportsFromSupabase(supabaseConfig),
+        fetchFeatureRequestsFromSupabase(supabaseConfig),
         fetchMaintenanceModeFromSupabase(supabaseConfig),
         fetchAdminStatsFromSupabase(supabaseConfig),
       ]);
 
-      if (annRes.error || repRes.error || maintRes.error) {
+      if (annRes.error || repRes.error || featRes.error || maintRes.error) {
         setConsoleError(
           `一部データの取得に失敗しました: ${
-            annRes.error || repRes.error || maintRes.error
+            annRes.error || repRes.error || featRes.error || maintRes.error
           }`
         );
       }
 
       setAnnouncements(annRes.data);
       setReports(repRes.data);
+      setFeatureRequests(featRes.data);
       setMaintenanceMode(maintRes.enabled);
       setStats(statsRes.stats);
     } catch {
@@ -242,6 +287,19 @@ export function AdminPortal({
           setReports((prev) => prev.filter((r) => r.id !== id));
           setStats(loadMockAdminStats());
         },
+        onFeatureRequestInsert: (req) => {
+          setFeatureRequests((prev) =>
+            prev.some((r) => r.id === req.id) ? prev : [req, ...prev]
+          );
+        },
+        onFeatureRequestUpdate: (req) => {
+          setFeatureRequests((prev) =>
+            prev.map((r) => (r.id === req.id ? req : r))
+          );
+        },
+        onFeatureRequestDelete: (id) => {
+          setFeatureRequests((prev) => prev.filter((r) => r.id !== id));
+        },
         onMaintenanceUpdate: (enabled) => {
           setMaintenanceMode(enabled);
         },
@@ -275,6 +333,22 @@ export function AdminPortal({
       },
     });
 
+    const unsubFeatureReqs = subscribeToFeatureRequestsRealtime(supabaseConfig, {
+      onInsert: (req) => {
+        setFeatureRequests((prev) =>
+          prev.some((r) => r.id === req.id) ? prev : [req, ...prev]
+        );
+      },
+      onUpdate: (req) => {
+        setFeatureRequests((prev) =>
+          prev.map((r) => (r.id === req.id ? req : r))
+        );
+      },
+      onDelete: (id) => {
+        setFeatureRequests((prev) => prev.filter((r) => r.id !== id));
+      },
+    });
+
     const unsubMaint = subscribeToMaintenanceModeRealtime(
       supabaseConfig,
       setMaintenanceMode
@@ -283,6 +357,7 @@ export function AdminPortal({
     return () => {
       unsubAnn();
       unsubReports();
+      unsubFeatureReqs();
       unsubMaint();
     };
   }, [isAuthenticated, isSupabaseConfigured, supabaseConfig, refreshAllData]);
@@ -623,10 +698,74 @@ export function AdminPortal({
     void refreshAllData();
   };
 
+  const handleChangeFeatureStatus = async (
+    requestId: string,
+    nextStatus: FeatureRequestStatus
+  ) => {
+    setFeatureRequests((prev) =>
+      prev.map((r) => (r.id === requestId ? { ...r, status: nextStatus } : r))
+    );
+
+    if (!isSupabaseConfigured) {
+      updateMockFeatureRequest(requestId, (r) => ({ ...r, status: nextStatus }));
+      flashSuccess(`改善要望のステータスを「${nextStatus}」に変更しました。`);
+      return;
+    }
+
+    const { error } = await updateFeatureRequestStatusInSupabase(
+      supabaseConfig,
+      requestId,
+      nextStatus
+    );
+    if (error) {
+      setConsoleError(`改善要望のステータス更新エラー: ${error}`);
+      void refreshAllData();
+      return;
+    }
+    flashSuccess(`改善要望のステータスを「${nextStatus}」に変更しました。`);
+  };
+
+  const handleDeleteFeatureRequest = async (requestId: string) => {
+    setConfirmDeleteFeatureId(null);
+    setFeatureRequests((prev) => prev.filter((r) => r.id !== requestId));
+
+    if (!isSupabaseConfigured) {
+      deleteMockFeatureRequest(requestId);
+      flashSuccess('改善要望を削除しました。');
+      return;
+    }
+
+    const { error } = await deleteFeatureRequestFromSupabase(
+      supabaseConfig,
+      requestId
+    );
+    if (error) {
+      setConsoleError(`改善要望の削除エラー: ${error}`);
+      void refreshAllData();
+      return;
+    }
+    flashSuccess('改善要望を削除しました。');
+  };
+
   const filteredReports = useMemo(() => {
     if (reportFilter === 'all') return reports;
     return reports.filter((r) => r.status === reportFilter);
   }, [reports, reportFilter]);
+
+  const filteredFeatureRequests = useMemo(() => {
+    const base =
+      featureFilter === 'all'
+        ? featureRequests
+        : featureRequests.filter((r) => r.status === featureFilter);
+    return [...base].sort((a, b) => {
+      if (featureSort === 'popular' && b.votes !== a.votes) {
+        return b.votes - a.votes;
+      }
+      return (
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    });
+  }, [featureRequests, featureFilter, featureSort]);
 
   // =========================================================================
   // RENDER 1: 2-Step Admin Authentication Gate (`/admin` unauthenticated)
@@ -1052,6 +1191,28 @@ export function AdminPortal({
 
             <button
               type="button"
+              onClick={() => setActiveConsoleTab('feature_requests')}
+              className={`min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors ${
+                activeConsoleTab === 'feature_requests'
+                  ? 'bg-emerald-500 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
+              }`}
+            >
+              <Lightbulb className="w-4 h-4" />
+              <span>改善要望の管理</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-md text-[11px] font-mono tabular-nums ${
+                  activeConsoleTab === 'feature_requests'
+                    ? 'bg-black/15 text-white'
+                    : 'bg-slate-100 dark:bg-black/20 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                {featureRequests.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveConsoleTab('maintenance')}
               className={`min-h-[42px] px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors ${
                 activeConsoleTab === 'maintenance'
@@ -1403,7 +1564,186 @@ export function AdminPortal({
           )}
 
           {/* =============================================================== */}
-          {/* TAB 3: Maintenance Mode & Old Data Cleanup                      */}
+          {/* TAB 3: Feature Requests Management                              */}
+          {/* =============================================================== */}
+          {activeConsoleTab === 'feature_requests' && (
+            <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 shadow-xs dark:shadow-none p-5 sm:p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                    改善お願い投票ボックス管理
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    ユーザーから投稿された要望のステータス変更・不適切な投稿の削除を行えます
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setFeatureSort('popular')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        featureSort === 'popular'
+                          ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      人気順
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFeatureSort('newest')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                        featureSort === 'newest'
+                          ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs'
+                          : 'text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      新着順
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(['all', '検討中', '開発中', '実装済み'] as const).map(
+                      (statusKey) => (
+                        <button
+                          key={statusKey}
+                          type="button"
+                          onClick={() => setFeatureFilter(statusKey)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            featureFilter === statusKey
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          {statusKey === 'all' ? 'すべて' : statusKey}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {filteredFeatureRequests.length === 0 ? (
+                <div className="py-14 text-center space-y-2">
+                  <Lightbulb className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    該当する改善要望はありません
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    ユーザーから新しい要望が投稿されると自動的に反映されます。
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredFeatureRequests.map((req) => {
+                    const statusMeta =
+                      FEATURE_STATUS_META[req.status] ||
+                      FEATURE_STATUS_META['検討中'];
+
+                    return (
+                      <article
+                        key={req.id}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/75 p-4 space-y-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-[11px] font-semibold ${statusMeta.badgeClass}`}
+                              >
+                                {statusMeta.label}
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 border border-emerald-200 dark:border-emerald-500/30 text-[11px] font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-300">
+                                <ThumbsUp className="w-3 h-3" />
+                                {req.votes} 票
+                              </span>
+                              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                投稿者: <strong className="font-semibold text-slate-700 dark:text-slate-200">{req.author_name}</strong>
+                              </span>
+                              <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">
+                                {formatDateTimeJP(req.created_at)}
+                              </span>
+                            </div>
+
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 break-words">
+                              {req.title}
+                            </h3>
+                          </div>
+
+                          {/* Delete feature request button (2-step confirm) */}
+                          {confirmDeleteFeatureId === req.id ? (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteFeatureRequest(req.id)
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-[11px] font-semibold text-white transition-colors"
+                              >
+                                削除確定
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteFeatureId(null)}
+                                className="px-2 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-[11px] text-slate-700 dark:text-slate-300 transition-colors"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteFeatureId(req.id)}
+                              aria-label="この改善要望を削除"
+                              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors shrink-0"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        {req.description && (
+                          <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800/80 rounded-lg p-3 whitespace-pre-wrap break-words">
+                            {req.description}
+                          </p>
+                        )}
+
+                        {/* One-click status switcher */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <span className="text-[11px] text-slate-500 mr-1">
+                            ステータス変更:
+                          </span>
+                          {(['検討中', '開発中', '実装済み'] as const).map(
+                            (st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() =>
+                                  void handleChangeFeatureStatus(req.id, st)
+                                }
+                                className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                                  req.status === st
+                                    ? FEATURE_STATUS_META[st].badgeClass
+                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:border-slate-300 dark:hover:border-slate-700'
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* =============================================================== */}
+          {/* TAB 4: Maintenance Mode & Old Data Cleanup                      */}
           {/* =============================================================== */}
           {activeConsoleTab === 'maintenance' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

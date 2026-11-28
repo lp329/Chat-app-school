@@ -2,7 +2,8 @@
   "name": "RoomLine",
   "description": "6桁のルーム番号ですぐに繋がる、LINEライクなリアルタイムチャットアプリ（Supabase Realtime対応・プロフィールカスタマイズ機能付き）",
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "microphone"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

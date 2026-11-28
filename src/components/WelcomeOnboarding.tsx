@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Camera, Check, Dices } from 'lucide-react';
+import { ArrowRight, Camera, Check, Dices, KeyRound } from 'lucide-react';
 import {
   AVATAR_COLORS,
   PRESET_AVATARS,
@@ -12,11 +12,13 @@ import { Avatar } from './Avatar';
 interface WelcomeOnboardingProps {
   initialProfile: UserProfile;
   onComplete: (profile: UserProfile) => void;
+  onOpenRestoreModal: () => void;
 }
 
 export function WelcomeOnboarding({
   initialProfile,
   onComplete,
+  onOpenRestoreModal,
 }: WelcomeOnboardingProps) {
   const [draft, setDraft] = useState<UserProfile>(initialProfile);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -262,6 +264,16 @@ export function WelcomeOnboarding({
           >
             <span>はじめる</span>
             <ArrowRight className="w-4 h-4" />
+          </button>
+
+          {/* Secondary Restore from Transfer Code Button */}
+          <button
+            type="button"
+            onClick={onOpenRestoreModal}
+            className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 transition-colors"
+          >
+            <KeyRound className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>引き継ぎコードから復元する</span>
           </button>
 
           <p className="text-[11px] text-center text-slate-500 dark:text-slate-500">

@@ -2,6 +2,7 @@ import {
   BadgeCheck,
   Calculator,
   Hash,
+  Lightbulb,
   Lock,
   MessageCircle,
   Moon,
@@ -37,6 +38,7 @@ interface TalkListEmptyOrMobileProps {
   onOpenJoinRoom: () => void;
   onOpenProfileModal: () => void;
   onOpenSettings: () => void;
+  onOpenFeatureRequests: () => void;
   onActivateCamouflage: () => void;
 }
 
@@ -54,6 +56,7 @@ export function TalkListEmptyOrMobile({
   onOpenJoinRoom,
   onOpenProfileModal,
   onOpenSettings,
+  onOpenFeatureRequests,
   onActivateCamouflage,
 }: TalkListEmptyOrMobileProps) {
   return (
@@ -111,7 +114,16 @@ export function TalkListEmptyOrMobile({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenFeatureRequests}
+              title="改善要望・投票"
+              aria-label="改善要望・投票ボックスを開く"
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-amber-500 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors"
+            >
+              <Lightbulb className="w-4 h-4" />
+            </button>
             <button
               type="button"
               onClick={() =>
